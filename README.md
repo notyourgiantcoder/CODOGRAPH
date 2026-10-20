@@ -1,6 +1,9 @@
 <div align="center">
 
-<h1><img src="assets/logo.svg" alt="Codograph logo" width="44" height="44" align="center">&nbsp;CODOGRAPH</h1>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.svg">
+  <img src="assets/wordmark-light.svg" alt="CODOGRAPH" width="416" height="72">
+</picture>
 
 **Understand your codebase. Before you change it.**
 

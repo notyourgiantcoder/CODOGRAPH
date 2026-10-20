@@ -115,7 +115,7 @@ function MapCanvas({
       const bright: FlowEdge[] = [];
       for (const e of view.edges) {
         // Direction only gets colour once there's a selection for it to be
-        // relative to: green flows into it, amber flows out of it.
+        // relative to: violet flows into it, cyan flows out of it.
         const stroke = lit?.incoming.has(e.id) ? "var(--incoming)" : lit?.outgoing.has(e.id) ? "var(--outgoing)" : undefined;
         // Under a category, a line stays bright only when both of its ends do.
         const outOfFocus =

@@ -8,26 +8,36 @@
 :root {
   color-scheme: light dark;
 
-  --canvas: light-dark(#fafafa, #0c0c0d);
-  --surface: light-dark(#ffffff, #131315);
-  --raised: light-dark(#f0f0f2, #1d1d20);
-  --line: light-dark(#e3e3e7, #2a2a2e);
-  --fg: light-dark(#18181b, #e6e6e9);
-  --fg-muted: light-dark(#6b6b73, #8d8d96);
-  --accent: light-dark(#2563eb, #4f8bff);
-  --accent-fg: #ffffff;
+  /* Dark side is the landing page palette; light side is its daytime
+     counterpart with the same violet. */
+  --canvas: light-dark(#f7f7fa, #090a0d);
+  --surface: light-dark(#ffffff, #111318);
+  --raised: light-dark(#eeeff4, #171a21);
+  /* Opaque, not the landing page's translucent white: nodes use it as a hover
+     fill over raised, and a translucent wash over the dark canvas comes out
+     no lighter than raised itself. */
+  --line: light-dark(#e2e3ea, #262931);
+  --fg: light-dark(#111318, #f4f5f7);
+  --fg-muted: light-dark(#5d6274, #949baa);
+  /* The landing page's soft violet: its deeper #8b5cf6 misses 4.5:1 as small
+     text on the dark panels. Light enough that accent buttons take dark text. */
+  --accent: light-dark(#7c3aed, #a78bfa);
+  --accent-fg: light-dark(#ffffff, #090a0d);
 
-  /* Direction: into a file, out of a file. */
-  --incoming: light-dark(#15803d, #4ade80);
-  --outgoing: light-dark(#b45309, #fbbf24);
+  /* Direction, as on the landing page: violet for files that import this
+     one, cyan for files it imports. The light cyan is darkened to hold 3:1
+     against the canvas. */
+  --incoming: light-dark(#7c3aed, #a78bfa);
+  --outgoing: light-dark(#228cb8, #67d5ff);
 
-  /* File kinds. Kept clear of the accent blue and the two direction hues. */
-  --kind-1: light-dark(#7c3aed, #a78bfa);
-  --kind-2: light-dark(#c026d3, #e879f9);
-  --kind-3: light-dark(#e11d48, #fb7185);
-  --kind-4: light-dark(#0891b2, #22d3ee);
+  /* File kinds, from the landing page's category palette. Kept clear of the
+     violet accent and the two direction hues. */
+  --kind-1: #3987e5;
+  --kind-2: #199e70;
+  --kind-3: #c98500;
+  --kind-4: #d55181;
 
-  --edge: light-dark(#a1a1aa, #52525b);
+  --edge: light-dark(rgb(93 98 116 / 0.4), rgb(148 155 170 / 0.34));
 }
 
 :root[data-theme="light"] {
@@ -68,6 +78,16 @@ body {
   color: var(--fg);
   font-family: var(--font-sans);
   font-size: 0.8125rem;
+  font-feature-settings: "ss01", "cv11";
+}
+
+::selection {
+  background: rgb(139 92 246 / 0.35);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* React Flow's base stylesheet leaves edges unstyled; they're greyscale until

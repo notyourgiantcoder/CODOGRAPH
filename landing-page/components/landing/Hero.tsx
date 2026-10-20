@@ -2,9 +2,11 @@
 
 import { motion } from "motion/react";
 import { ArrowRight, ChevronDown } from "lucide-react";
+import { GithubIcon } from "@/components/landing/Brand";
 import { HeroMockup } from "@/components/landing/HeroMockup";
-import { Button } from "@/components/ui/primitives";
+import { Button, buttonClass } from "@/components/ui/primitives";
 import { scrollToId } from "@/lib/cn";
+import { siteConfig } from "@/lib/site";
 
 const ease = [0.2, 0.8, 0.2, 1] as const;
 
@@ -64,6 +66,12 @@ export function Hero() {
               Explore the demo
               <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
             </Button>
+            {siteConfig.githubUrl && (
+              <a href={siteConfig.githubUrl} target="_blank" rel="noreferrer" className={buttonClass("secondary", "lg")}>
+                <GithubIcon className="size-4" />
+                Run it on GitHub
+              </a>
+            )}
             <Button size="lg" variant="secondary" onClick={() => scrollToId("features")}>
               Discover features
               <ChevronDown className="size-4 transition-transform group-hover:translate-y-0.5" aria-hidden />

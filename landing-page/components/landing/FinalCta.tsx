@@ -1,8 +1,10 @@
 "use client";
 
 import { ArrowRight } from "lucide-react";
-import { Reveal, Button } from "@/components/ui/primitives";
+import { GithubIcon } from "@/components/landing/Brand";
+import { Reveal, Button, buttonClass } from "@/components/ui/primitives";
 import { scrollToId } from "@/lib/cn";
+import { siteConfig } from "@/lib/site";
 import { FILES } from "@/data/repository";
 import { DEPENDENCIES } from "@/lib/graph";
 
@@ -25,10 +27,18 @@ export function FinalCta() {
           <p className="mx-auto mt-5 max-w-lg text-pretty text-base text-muted sm:text-lg">
             The playground runs entirely in your browser on a synthetic repository. Click around, break nothing.
           </p>
-          <Button size="lg" className="mt-10" onClick={() => scrollToId("demo")}>
-            Explore the demo
-            <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
-          </Button>
+          <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Button size="lg" onClick={() => scrollToId("demo")}>
+              Explore the demo
+              <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden />
+            </Button>
+            {siteConfig.githubUrl && (
+              <a href={siteConfig.githubUrl} target="_blank" rel="noreferrer" className={buttonClass("secondary", "lg")}>
+                <GithubIcon className="size-4" />
+                Run it on your machine
+              </a>
+            )}
+          </div>
         </div>
       </Reveal>
     </section>

@@ -6,7 +6,7 @@ export const siteConfig = {
   name: "Codograph",
   tagline: "Understand your codebase. Before you change it.",
   /** Set to a repository URL to show GitHub links in the navigation and footer. */
-  githubUrl: null as string | null,
+  githubUrl: "https://github.com/notyourgiantcoder/CODOGRAPH" as string | null,
 };
 
 export const NAV_LINKS = [

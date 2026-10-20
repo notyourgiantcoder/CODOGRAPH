@@ -9,6 +9,8 @@ what a file imports, what imports it, and what breaks if it changes.
 
 ### [▶ Watch the live demo: codograph.vercel.app](https://codograph.vercel.app/)
 
+<a href="https://codograph.vercel.app/"><img src="assets/hero.webp" alt="Codograph: a dependency map of a repository with the selected file's imports and dependents highlighted" width="100%"></a>
+
 ![Next.js](https://img.shields.io/badge/Next.js_16-black?style=for-the-badge&logo=nextdotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
 ![React Flow](https://img.shields.io/badge/React_Flow-FF0072?style=for-the-badge&logo=react&logoColor=white)
@@ -64,9 +66,18 @@ This repository holds two separate Next.js projects:
 👉 **Just want to see it?** Open the [live demo](https://codograph.vercel.app/).
 👉 **Want to use it on your own repositories?** Follow the [tutorial](#tutorial-run-the-real-codograph-on-your-machine) below.
 
+<p align="center">
+  <img src="assets/playground.webp" alt="The interactive playground: file explorer, category filters, dependency graph and the inspector for products.ts" width="100%">
+  <br><sub>The interactive playground on the live demo: search, filter by category, inspect any file and run an impact analysis.</sub>
+</p>
+
 ---
 
 ## Features
+
+<p align="center">
+  <img src="assets/features.webp" alt="Five views of one graph: dependency mapping, blast radius, grounded AI explanations, repository exploration and architectural Q&A" width="100%">
+</p>
 
 - **Real code parsing.** Uses `ts-morph` (the TypeScript compiler API) to resolve `import`, re-exports, dynamic
   `import()` and CommonJS `require()` into exact file-to-file edges, including `tsconfig` path aliases.

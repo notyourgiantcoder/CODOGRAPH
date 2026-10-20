@@ -1,6 +1,6 @@
 <div align="center">
 
-# CODOGRAPH
+<h1><img src="assets/logo.svg" alt="Codograph logo" width="44" height="44" align="center">&nbsp;CODOGRAPH</h1>
 
 **Understand your codebase. Before you change it.**
 

@@ -25,7 +25,6 @@ export default async function AnalysisPage({ params }: PageProps<"/analyses/[id]
     // Only what the pane shows crosses to the browser, not the whole coverage report.
     return (
       <div className="flex h-full flex-col">
-        <AnalysisHeader {...header} />
         <AnalysisView
           files={result.files}
           edges={result.edges}
@@ -35,10 +34,12 @@ export default async function AnalysisPage({ params }: PageProps<"/analyses/[id]
           analysisId={header.analysisId}
           commitSha={header.commitSha}
           repository={{
+            owner: header.repository.owner,
             name: header.repository.name,
             projects: result.projects,
             skipped: result.coverage.files.skipped,
             unresolved: result.coverage.imports.total.unresolved,
+            fetches: result.coverage.fetches,
           }}
         />
       </div>
@@ -52,9 +53,11 @@ export default async function AnalysisPage({ params }: PageProps<"/analyses/[id]
     return (
       <div className="flex h-full flex-col">
         <AnalysisHeader {...loaded.header} />
-        <div className="px-3 py-3 text-xs">
-          <p>This analysis was stored by an older version of the parser, which didn&apos;t read everything the current one does.</p>
-          <p className="mt-0.5 text-fg-muted">Re-run it to map it with the current one.</p>
+        <div className="mx-auto mt-14 max-w-lg rounded-2xl border border-line-strong bg-panel px-6 py-5 text-center">
+          <p className="text-[14px] font-medium text-fg">This analysis was stored by an older version of the parser.</p>
+          <p className="mt-1 text-[13px] text-muted">
+            It didn&apos;t read everything the current one does, such as complexity and network calls. Re-analyse it to map it with the current one.
+          </p>
         </div>
       </div>
     );

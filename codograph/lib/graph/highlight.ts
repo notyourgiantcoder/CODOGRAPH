@@ -16,6 +16,10 @@ export type Highlight = {
   incoming: ReadonlySet<string>;
   /** Drawn edges out of the selection. */
   outgoing: ReadonlySet<string>;
+  /** Endpoints of what imports the selection, so they can be marked as its dependents. */
+  dependents: ReadonlySet<string>;
+  /** Endpoints of what the selection imports. */
+  dependencies: ReadonlySet<string>;
 };
 
 /** A folded node has one endpoint (handle ""); a panel has one per row, plus above and below. */
@@ -28,19 +32,23 @@ export function highlight(view: MapView, edges: readonly Edge[], selection: Sele
   const incoming = new Set<string>();
   const outgoing = new Set<string>();
   const endpoints = new Set<string>();
+  const dependents = new Set<string>();
+  const dependencies = new Set<string>();
 
   if (selection.kind === "group") {
     for (const e of view.edges) {
       if (e.target === selection.id) {
         incoming.add(e.id);
         endpoints.add(endpointKey(e.source, e.sourceHandle));
+        dependents.add(endpointKey(e.source, e.sourceHandle));
       }
       if (e.source === selection.id) {
         outgoing.add(e.id);
         endpoints.add(endpointKey(e.target, e.targetHandle));
+        dependencies.add(endpointKey(e.target, e.targetHandle));
       }
     }
-    return { endpoints, objects: new Set([selection.id]), incoming, outgoing };
+    return { endpoints, objects: new Set([selection.id]), incoming, outgoing, dependents, dependencies };
   }
 
   const key = (path: string) => {
@@ -53,15 +61,26 @@ export function highlight(view: MapView, edges: readonly Edge[], selection: Sele
   // Neighbours come from the file edges rather than the drawn ones, so a
   // connection to a row in the same panel, which isn't drawn, still lights up.
   for (const e of edges) {
-    const other = e.source === selection.path ? e.target : e.target === selection.path ? e.source : null;
-    const at = other === null ? undefined : key(other);
-    if (at) endpoints.add(at);
+    if (e.source === selection.path) {
+      const at = key(e.target);
+      if (at) {
+        endpoints.add(at);
+        dependencies.add(at);
+      }
+    }
+    if (e.target === selection.path) {
+      const at = key(e.source);
+      if (at) {
+        endpoints.add(at);
+        dependents.add(at);
+      }
+    }
   }
   for (const e of view.edges) {
     if (endpointKey(e.target, e.targetHandle) === self) incoming.add(e.id);
     if (endpointKey(e.source, e.sourceHandle) === self) outgoing.add(e.id);
   }
-  return { endpoints, objects: new Set(), incoming, outgoing };
+  return { endpoints, objects: new Set(), incoming, outgoing, dependents, dependencies };
 }
 
 /**

@@ -9,9 +9,9 @@ import { RerunButton } from "./progress/rerun-button";
 export function AnalysisHeader({ analysisId, repository, commitSha }: { analysisId: string; repository: { owner: string; name: string }; commitSha: string }) {
   const router = useRouter();
   return (
-    <div className="flex h-9 shrink-0 items-center gap-3 border-b border-line px-3 text-xs">
+    <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-toolbar px-4 text-xs sm:px-6">
       <h1 className="font-mono text-[13px]">
-        <span className="text-fg-muted">{repository.owner}/</span>
+        <span className="text-subtle">{repository.owner}/</span>
         {repository.name}
       </h1>
       <span className="font-mono text-fg-muted" title={commitSha}>

@@ -4,17 +4,21 @@ import type { MapEdge, MapObject } from "@/lib/graph/view";
 // Sizes are fixed px, not rem: dagre lays out in the same units React Flow
 // draws in, and the zoom does the scaling. The node components read these
 // constants so the box drawn is the box laid out.
-export const CHAR_WIDTH = 6.6; // Geist Mono advance at 11px
+export const CHAR_WIDTH = 6.9; // Geist Mono advance at 11.5px, the row labels
+const LABEL_CHAR_WIDTH = 7.2; // Geist Sans at 12.5px, generous: the folder labels
 export const PAD_X = 10;
-export const FOLDED_MIN_HEIGHT = 40;
-export const FOLDED_MIN_WIDTH = 120;
-export const PANEL_HEADER_HEIGHT = 40;
-export const ROW_HEIGHT = 20;
-const ROW_NUMBERS_WIDTH = 84; // swatch, gaps and the fan counts
-const PANEL_MIN_WIDTH = 200;
-const PANEL_MAX_WIDTH = 440;
-const FAN_IN_SCALE = 5;
-const FOLDED_MAX_HEIGHT = 160;
+const ICON_WIDTH = 38; // the role tile and the gap after it
+// The landing page draws every node 178 by 48; a folder that many files import
+// grows a little taller, so the box still says it's a hub.
+export const FOLDED_MIN_HEIGHT = 52;
+export const FOLDED_MIN_WIDTH = 178;
+export const PANEL_HEADER_HEIGHT = 52;
+export const ROW_HEIGHT = 26;
+const ROW_NUMBERS_WIDTH = 104; // icon, gaps and the fan counts
+const PANEL_MIN_WIDTH = 230;
+const PANEL_MAX_WIDTH = 470;
+const FAN_IN_SCALE = 3;
+const FOLDED_MAX_HEIGHT = 96;
 
 export type Box = { x: number; y: number; width: number; height: number };
 
@@ -22,7 +26,7 @@ export type Box = { x: number; y: number; width: number; height: number };
 // the minimum. Width comes from the label alone, so a long name doesn't read
 // as an important file.
 export function sizeOf(o: MapObject): { width: number; height: number } {
-  const labelWidth = o.label.length * CHAR_WIDTH + 2 * PAD_X;
+  const labelWidth = o.label.length * LABEL_CHAR_WIDTH + ICON_WIDTH + 2 * PAD_X;
   if (o.kind === "folded") {
     return {
       width: Math.ceil(Math.max(FOLDED_MIN_WIDTH, labelWidth)),
@@ -43,7 +47,7 @@ export function sizeOf(o: MapObject): { width: number; height: number } {
 // so the same data and the same open set give the same picture.
 export function layout(objects: readonly MapObject[], edges: readonly MapEdge[]): Map<string, Box> {
   const g = new dagre.graphlib.Graph<{ rankdir: "LR"; nodesep: number; ranksep: number }, { width: number; height: number; x?: number; y?: number }, object>();
-  g.setGraph({ rankdir: "LR", nodesep: 16, ranksep: 72 });
+  g.setGraph({ rankdir: "LR", nodesep: 22, ranksep: 96 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const o of objects) g.setNode(o.id, sizeOf(o));
   // Several row-level lines between the same two objects are one constraint

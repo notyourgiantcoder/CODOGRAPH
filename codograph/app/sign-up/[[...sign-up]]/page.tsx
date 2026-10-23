@@ -1,9 +1,10 @@
 import { SignUp } from "@clerk/nextjs";
+import { AuthFrame } from "@/components/auth-frame";
 
 export default function SignUpPage() {
   return (
-    <div className="flex flex-1 items-center justify-center">
+    <AuthFrame caption="Understand your codebase. Before you change it.">
       <SignUp />
-    </div>
+    </AuthFrame>
   );
 }

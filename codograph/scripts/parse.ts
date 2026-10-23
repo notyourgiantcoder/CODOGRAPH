@@ -55,19 +55,22 @@ function main(argv: string[]): void {
 }
 
 // An older output may come from an earlier schema, so it isn't read through
-// the contract: only its edge list is, as raw JSON. require() edges are set
-// aside first, since no parser before them could find one, so "identical"
-// means the edges it did find haven't changed by a byte.
+// the contract: only its edge list is, as raw JSON. Edges of a kind the old
+// file has none of (require before phase 9, fetch before phase 11) are set
+// aside first, since that parser couldn't find one, so "identical" means the
+// edges it did find haven't changed by a byte.
 function compareEdges(result: ParseResult, file: string): void {
   const old: unknown = JSON.parse(readFileSync(file, "utf8"));
   const oldEdges: unknown = typeof old === "object" && old !== null ? Reflect.get(old, "edges") : undefined;
   if (!Array.isArray(oldEdges)) throw new Error(`${file} has no edge list`);
-  const kept = result.edges.filter((e) => e.kind !== "require");
+  const oldKinds = new Set(oldEdges.map((e: unknown) => (typeof e === "object" && e !== null ? Reflect.get(e, "kind") : undefined)));
+  const kept = result.edges.filter((e) => oldKinds.has(e.kind));
+  const setAsideKinds = [...new Set(result.edges.filter((e) => !oldKinds.has(e.kind)).map((e) => e.kind))];
   const setAside = result.edges.length - kept.length;
   const before = JSON.stringify(oldEdges, null, 2);
   const after = JSON.stringify(kept, null, 2);
   console.log(`\nCompare   ${file}`);
-  console.log(`  ${oldEdges.length} edges before, ${kept.length} of those kinds now, plus ${setAside} require`);
+  console.log(`  ${oldEdges.length} edges before, ${kept.length} of those kinds now, plus ${setAside} ${setAsideKinds.join(", ") || "new"}`);
   if (before === after) {
     console.log("  byte-identical");
     return;
@@ -107,7 +110,21 @@ function printSummary(result: ParseResult, all: boolean): void {
   const excluded = Object.entries(imports.excluded);
   if (excluded.length) console.log(`Excluded  ${excluded.map(([reason, n]) => `${reason} ${n}`).join("  ")}`);
 
-  console.log(`Edges     ${result.edges.length} after removing duplicates (${result.edges.filter((e) => e.typeOnly).length} type-only)`);
+  const fetchEdges = result.edges.filter((e) => e.kind === "fetch").length;
+  console.log(`Edges     ${result.edges.length} after removing duplicates (${result.edges.filter((e) => e.typeOnly).length} type-only, ${fetchEdges} network calls)`);
+
+  const ranked = [...result.files].sort((a, b) => b.complexity - a.complexity || a.path.localeCompare(b.path));
+  const total = result.files.reduce((sum, f) => sum + f.complexity, 0);
+  console.log(`\nComplexity  total ${total}  (one plus each branch point, per file)`);
+  for (const f of ranked.slice(0, all ? ranked.length : 5)) console.log(`  ${String(f.complexity).padStart(5)}  ${f.path}`);
+
+  const { fetches } = result.coverage;
+  console.log(`\nfetch()   seen ${fetches.seen}  matched ${fetches.matched}  external ${fetches.external}  unresolved ${fetches.unresolved.length}`);
+  for (const e of result.edges.filter((e) => e.kind === "fetch")) console.log(`  ${e.source}:${e.line}  ${e.specifier}  →  ${e.target}`);
+  for (const u of all ? fetches.unresolved : fetches.unresolved.slice(0, EXAMPLES_PER_REASON * 2)) {
+    console.log(`  unresolved ${u.from}:${u.line}  ${u.url}  ${u.reason}: ${u.detail}`);
+  }
+  if (!all && fetches.unresolved.length > EXAMPLES_PER_REASON * 2) console.log(`  … ${fetches.unresolved.length - EXAMPLES_PER_REASON * 2} more (--all)`);
 
   const { routes } = result.coverage;
   console.log(`\nRoutes    ${result.routes.length}`);

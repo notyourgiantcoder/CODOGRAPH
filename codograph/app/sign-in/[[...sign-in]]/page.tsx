@@ -1,9 +1,10 @@
 import { SignIn } from "@clerk/nextjs";
+import { AuthFrame } from "@/components/auth-frame";
 
 export default function SignInPage() {
   return (
-    <div className="flex flex-1 items-center justify-center">
+    <AuthFrame caption="Understand your codebase. Before you change it.">
       <SignIn />
-    </div>
+    </AuthFrame>
   );
 }

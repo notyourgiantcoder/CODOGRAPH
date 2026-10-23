@@ -1,12 +1,14 @@
 "use client";
 
 import { Handle, Position, useUpdateNodeInternals, type Node, type NodeProps } from "@xyflow/react";
-import { createContext, useContext, useEffect, useRef, type WheelEvent } from "react";
-import { categoryOf } from "@/lib/graph/categories";
-import { endpointKey, type CategoryFocus, type Highlight, type Selection } from "@/lib/graph/highlight";
+import { ChevronsLeftRight, Folder, FolderOpen } from "lucide-react";
+import { createContext, memo, useContext, useEffect, useRef, type WheelEvent } from "react";
+import { cn } from "@/lib/cn";
+import { endpointKey, type Highlight, type Selection } from "@/lib/graph/highlight";
 import { ABOVE_HANDLE, BELOW_HANDLE, MAX_ROWS, type FoldedObject, type PanelObject } from "@/lib/graph/view";
+import { UNCLASSIFIED, type RailKey } from "@/lib/roles";
+import { RoleIcon } from "@/components/ui/role-icon";
 import { PANEL_HEADER_HEIGHT, PAD_X, ROW_HEIGHT } from "./layout";
-import { CategorySwatch } from "./swatch";
 
 export type FoldedNode = Node<FoldedObject, "folded">;
 export type PanelNode = Node<PanelObject, "panel">;
@@ -21,73 +23,96 @@ export const MapActions = createContext<{
   selectFile: (path: string) => void;
   /** Move a panel's window by this many rows; the view clamps it. */
   scroll: (id: string, offset: number) => void;
-  /** Reports what the pointer is over, so the detail pane can mark it too. */
+  /** Reports what the pointer is over, so the inspector can mark it too. */
   hover: (hover: Selection) => void;
 }>({ close: () => {}, selectFile: () => {}, scroll: () => {}, hover: () => {} });
 
 export const MapSelection = createContext<{
   selection: Selection;
+  /** What the selection, or failing that the pointer, leaves bright. */
   highlight: Highlight | null;
-  /** Endpoint key of what's hovered, here or in the pane. */
+  /** Endpoint key of what's hovered, here or in the inspector. */
   hovered: string | null;
-  /** What the rail's category leaves bright, and how many files matched in each object. */
-  focus: CategoryFocus | null;
-  category: string | null;
-}>({ selection: null, highlight: null, hovered: null, focus: null, category: null });
+  /** Every file's rail category, for its row icon. */
+  roles: ReadonlyMap<string, RailKey>;
+  /** Whether the entrance has played, so nodes only animate in once. */
+  settled: boolean;
+}>({ selection: null, highlight: null, hovered: null, roles: new Map(), settled: true });
 
-const DIM = "opacity-25";
-// Hover is marked with an outline rather than a fill, so it reads the same on
-// a selected row, a dimmed one and a plain one.
-const HOVER_RING = "shadow-[inset_0_0_0_1px_var(--accent)]";
+type Visual = "default" | "hovered" | "selected" | "dependent" | "dependency" | "dimmed";
 
-// Everything inside a node is sized in px, never rem. The layout boxes are px
-// and the app's root font size grows on large screens, so rem spacing in here
-// would overflow the box it was laid out for.
+// The landing page's node states, one class list each.
+const SHELL: Record<Visual, string> = {
+  default: "border-line-strong bg-panel-2",
+  hovered: "border-ink/30 bg-panel-3",
+  selected: "border-violet bg-panel-2 shadow-[0_0_0_3px_rgba(139,92,246,0.25),0_0_36px_-6px_rgba(139,92,246,0.7)]",
+  dependent: "border-violet-soft/55 bg-tint-violet",
+  dependency: "border-cyan/55 bg-tint-cyan",
+  dimmed: "border-line bg-panel-2 opacity-40",
+};
+
+function visualOf(key: string, highlight: Highlight | null, hovered: boolean, selected: boolean): Visual {
+  if (selected) return "selected";
+  if (hovered) return "hovered";
+  if (!highlight) return "default";
+  if (highlight.dependents.has(key)) return "dependent";
+  if (highlight.dependencies.has(key)) return "dependency";
+  return highlight.endpoints.has(key) ? "default" : "dimmed";
+}
 
 // Handles are invisible anchors: an edge ends at the box or row, not at a dot.
 const anchor = "!size-px !min-h-0 !min-w-0 !border-0 !bg-transparent";
 
-export function FoldedNodeView({ id, data }: NodeProps<FoldedNode>) {
+// Everything inside a node is sized in px, never rem: the layout boxes are px,
+// so rem spacing in here would overflow the box it was laid out for.
+
+function FoldedNodeComponent({ id, data }: NodeProps<FoldedNode>) {
   const { hover } = useContext(MapActions);
-  const { highlight, hovered, focus, category } = useContext(MapSelection);
+  const { selection, highlight, hovered, settled } = useContext(MapSelection);
   const key = endpointKey(id, null);
-  const isHovered = hovered === key;
-  const dim =
-    !isHovered && ((highlight !== null && !highlight.endpoints.has(key)) || (focus !== null && !focus.endpoints.has(key)));
+  const visual = visualOf(key, highlight, hovered === key, selection?.kind === "group" && selection.id === id);
   return (
-    <div
-      title={data.dir}
-      onMouseEnter={() => hover({ kind: "group", id })}
-      onMouseLeave={() => hover(null)}
-      className={`flex size-full cursor-pointer flex-col justify-center gap-[2px] rounded-[4px] border bg-surface ${
-        isHovered ? "border-accent" : "border-line"
-      } ${dim ? DIM : ""}`}
-      style={{ paddingInline: PAD_X }}
-    >
-      <Handle type="target" position={Position.Left} className={anchor} isConnectable={false} />
-      <span className="truncate font-mono text-[11px] leading-[16px] text-fg">{data.label}</span>
-      <Meta
-        fileCount={data.fileCount}
-        fanIn={data.fanIn}
-        fanOut={data.fanOut}
-        match={category === null ? null : { category, count: focus?.counts.get(id) ?? 0 }}
-      />
-      <Handle type="source" position={Position.Right} className={anchor} isConnectable={false} />
+    <div className={cn("size-full", !settled && "animate-node-in")}>
+      <div
+        title={`${data.dir} — click to open`}
+        onMouseEnter={() => hover({ kind: "group", id })}
+        onMouseLeave={() => hover(null)}
+        className={cn(
+          "relative flex size-full cursor-pointer items-center gap-2.5 rounded-[10px] border transition-[opacity,border-color,box-shadow,background-color] duration-300",
+          SHELL[visual],
+        )}
+        style={{ paddingInline: PAD_X }}
+      >
+        <Handle type="target" position={Position.Left} className={anchor} isConnectable={false} />
+        <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-ink/[0.05] text-muted shadow-[inset_0_0_0_1px_var(--line-strong)]">
+          <Folder className="size-3.5" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className="truncate text-[12.5px] font-medium text-fg">{data.label}</div>
+          <Meta fileCount={data.fileCount} fanIn={data.fanIn} fanOut={data.fanOut} />
+        </div>
+        <Handle type="source" position={Position.Right} className={anchor} isConnectable={false} />
+      </div>
     </div>
   );
 }
 
-export function PanelNodeView({ id, data }: NodeProps<PanelNode>) {
+export const FoldedNodeView = memo(FoldedNodeComponent);
+
+function PanelNodeComponent({ id, data }: NodeProps<PanelNode>) {
   const { close, selectFile, scroll, hover } = useContext(MapActions);
-  const { selection, highlight, hovered, focus, category } = useContext(MapSelection);
+  const { selection, highlight, hovered, roles } = useContext(MapSelection);
   const selected = selection?.kind === "group" && selection.id === id;
-  // Whole means every row stays bright: nothing is selected, or this panel is.
+  // Whole means every row stays bright: nothing is highlighted, or this panel is.
   const whole = highlight === null || highlight.objects.has(id);
-  // A row is bright when the selection and the rail's category both leave it so.
-  const lit = (handle: string) =>
-    (whole || (highlight?.endpoints.has(endpointKey(id, handle)) ?? false)) &&
-    (focus === null || focus.endpoints.has(endpointKey(id, handle)));
-  const anyLit = data.rows.some((r) => lit(r.path)) || (data.scrolls && (lit(ABOVE_HANDLE) || lit(BELOW_HANDLE)));
+  const rowVisual = (handle: string, isSelected: boolean): Visual => {
+    const key = endpointKey(id, handle);
+    if (isSelected) return "selected";
+    if (hovered === key) return "hovered";
+    if (whole) return "default";
+    return visualOf(key, highlight, false, false);
+  };
+  const anyLit = whole || data.rows.some((r) => rowVisual(r.path, false) !== "dimmed");
 
   // Wheel deltas arrive in pixels from trackpads and in lines from some mice;
   // they add up until they make a whole row, so slow scrolling still moves.
@@ -108,9 +133,11 @@ export function PanelNodeView({ id, data }: NodeProps<PanelNode>) {
 
   return (
     <div
-      className={`flex size-full flex-col overflow-hidden rounded-[4px] border bg-surface ${
-        selected ? "border-accent" : "border-fg-muted"
-      } ${anyLit ? "" : DIM}`}
+      className={cn(
+        "flex size-full flex-col overflow-hidden rounded-[12px] border bg-panel shadow-xl shadow-black/20 transition-[opacity,border-color,box-shadow] duration-300",
+        selected ? "border-violet shadow-[0_0_0_3px_rgba(139,92,246,0.25),0_0_36px_-6px_rgba(139,92,246,0.7)]" : "border-line-strong",
+        !anyLit && "opacity-40",
+      )}
     >
       <button
         type="button"
@@ -118,18 +145,17 @@ export function PanelNodeView({ id, data }: NodeProps<PanelNode>) {
         onMouseEnter={() => hover({ kind: "group", id })}
         onMouseLeave={() => hover(null)}
         title={`${data.dir} — click to fold`}
-        className={`flex shrink-0 flex-col justify-center gap-[2px] border-b border-line bg-raised text-left hover:bg-line ${
-          whole || !anyLit ? "" : DIM
-        }`}
+        className="group/header flex shrink-0 items-center gap-2.5 border-b border-line bg-panel-2 text-left transition hover:bg-panel-3"
         style={{ height: PANEL_HEADER_HEIGHT, paddingInline: PAD_X }}
       >
-        <span className="truncate font-mono text-[11px] leading-[16px] font-semibold text-fg">{data.label}</span>
-        <Meta
-          fileCount={data.fileCount}
-          fanIn={data.fanIn}
-          fanOut={data.fanOut}
-          match={category === null ? null : { category, count: focus?.counts.get(id) ?? 0 }}
-        />
+        <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-violet/15 text-violet-soft shadow-[inset_0_0_0_1px_rgba(139,92,246,0.35)]">
+          <FolderOpen className="size-3.5" aria-hidden />
+        </span>
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className="truncate text-[12.5px] font-semibold text-fg">{data.label}</div>
+          <Meta fileCount={data.fileCount} fanIn={data.fanIn} fanOut={data.fanOut} />
+        </div>
+        <ChevronsLeftRight className="size-3.5 shrink-0 text-subtle opacity-0 transition group-hover/header:opacity-100" aria-label="Fold" />
       </button>
       {/* nowheel: the wheel scrolls the rows here instead of zooming the map. */}
       <ul className={data.scrolls ? "nowheel" : undefined} onWheel={onWheel}>
@@ -138,14 +164,13 @@ export function PanelNodeView({ id, data }: NodeProps<PanelNode>) {
             handle={ABOVE_HANDLE}
             count={data.above}
             label="above"
-            dim={anyLit && !lit(ABOVE_HANDLE)}
-            hovered={hovered === endpointKey(id, ABOVE_HANDLE)}
+            visual={rowVisual(ABOVE_HANDLE, false)}
             onClick={() => scroll(id, data.offset - MAX_ROWS)}
           />
         )}
         {data.rows.map((row) => {
           const rowSelected = selection?.kind === "file" && selection.path === row.path;
-          const rowHovered = hovered === endpointKey(id, row.path);
+          const visual = rowVisual(row.path, rowSelected);
           return (
             <li key={row.path} className="relative" style={{ height: ROW_HEIGHT }}>
               <Handle id={row.path} type="target" position={Position.Left} className={anchor} isConnectable={false} />
@@ -156,13 +181,22 @@ export function PanelNodeView({ id, data }: NodeProps<PanelNode>) {
                 onMouseLeave={() => hover(null)}
                 title={row.path}
                 aria-pressed={rowSelected}
-                className={`flex size-full items-center gap-[6px] text-left text-[11px] ${
-                  rowSelected ? "bg-accent/15 shadow-[inset_2px_0_0_var(--accent)]" : "hover:bg-raised"
-                } ${rowHovered ? HOVER_RING : anyLit && !lit(row.path) ? DIM : ""}`}
+                className={cn(
+                  "relative flex size-full items-center gap-2 text-left text-[11.5px] transition-colors",
+                  visual === "selected" && "bg-violet/[0.14] text-fg",
+                  visual === "hovered" && "bg-ink/[0.06] text-fg",
+                  visual === "dependent" && "bg-tint-violet text-fg",
+                  visual === "dependency" && "bg-tint-cyan text-fg",
+                  visual === "default" && "text-fg/90 hover:bg-ink/[0.04]",
+                  visual === "dimmed" && "text-muted opacity-40",
+                )}
                 style={{ paddingInline: PAD_X }}
               >
-                <CategorySwatch category={categoryOf(row.path)} />
-                <span className="min-w-0 flex-1 truncate font-mono text-fg">{row.label}</span>
+                {visual === "selected" && <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-violet" />}
+                {visual === "dependent" && <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-violet-soft" />}
+                {visual === "dependency" && <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-cyan" />}
+                <RoleIcon role={roles.get(row.path) ?? UNCLASSIFIED} size="xs" />
+                <span className="min-w-0 flex-1 truncate font-mono">{row.label}</span>
                 <Fan fanIn={row.fanIn} fanOut={row.fanOut} />
               </button>
               <Handle id={row.path} type="source" position={Position.Right} className={anchor} isConnectable={false} />
@@ -174,8 +208,7 @@ export function PanelNodeView({ id, data }: NodeProps<PanelNode>) {
             handle={BELOW_HANDLE}
             count={data.below}
             label="below"
-            dim={anyLit && !lit(BELOW_HANDLE)}
-            hovered={hovered === endpointKey(id, BELOW_HANDLE)}
+            visual={rowVisual(BELOW_HANDLE, false)}
             onClick={() => scroll(id, data.offset + MAX_ROWS)}
           />
         )}
@@ -184,17 +217,12 @@ export function PanelNodeView({ id, data }: NodeProps<PanelNode>) {
   );
 }
 
+export const PanelNodeView = memo(PanelNodeComponent);
+
 // Stands for the files scrolled out of the window on one side. Edges to those
 // files end here, so they stay attached to the panel rather than vanishing.
 // Clicking pages the window that way.
-function OffscreenRow(props: {
-  handle: string;
-  count: number;
-  label: string;
-  dim: boolean;
-  hovered: boolean;
-  onClick: () => void;
-}) {
+function OffscreenRow(props: { handle: string; count: number; label: string; visual: Visual; onClick: () => void }) {
   return (
     <li className="relative" style={{ height: ROW_HEIGHT }}>
       <Handle id={props.handle} type="target" position={Position.Left} className={anchor} isConnectable={false} />
@@ -202,9 +230,12 @@ function OffscreenRow(props: {
         type="button"
         onClick={props.onClick}
         disabled={props.count === 0}
-        className={`flex size-full items-center text-left text-[10px] text-fg-muted tabular-nums enabled:hover:bg-raised enabled:hover:text-fg disabled:opacity-50 ${
-          props.hovered ? HOVER_RING : props.dim ? DIM : ""
-        }`}
+        className={cn(
+          "flex size-full items-center text-left font-mono text-[10.5px] text-subtle tabular-nums transition enabled:hover:bg-ink/[0.04] enabled:hover:text-fg disabled:opacity-50",
+          props.visual === "dependent" && "bg-tint-violet",
+          props.visual === "dependency" && "bg-tint-cyan",
+          props.visual === "dimmed" && "opacity-40",
+        )}
         style={{ paddingInline: PAD_X }}
       >
         {props.count} {props.count === 1 ? "file" : "files"} {props.label}
@@ -214,42 +245,26 @@ function OffscreenRow(props: {
   );
 }
 
-// Under a rail category the file count says how many of them matched, so each
-// part of the repository shows how much of the category lives in it.
-function Meta(props: {
-  fileCount: number;
-  fanIn: number;
-  fanOut: number;
-  match: { category: string; count: number } | null;
-}) {
-  const { fileCount, fanIn, fanOut, match } = props;
+function Meta({ fileCount, fanIn, fanOut }: { fileCount: number; fanIn: number; fanOut: number }) {
   return (
-    <span className="flex items-center gap-[8px] text-[10px] leading-[12px] text-fg-muted tabular-nums">
-      {match ? (
-        <span className="flex items-center gap-[4px]" title={`${match.count} of ${fileCount} files match`}>
-          <span>
-            <span className="text-fg">{match.count}</span>/{fileCount} {fileCount === 1 ? "file" : "files"}
-          </span>
-        </span>
-      ) : (
-        <span>
-          {fileCount} {fileCount === 1 ? "file" : "files"}
-        </span>
-      )}
+    <span className="flex items-center gap-2 font-mono text-[10px] text-subtle tabular-nums">
+      <span>
+        {fileCount} {fileCount === 1 ? "file" : "files"}
+      </span>
       <Fan fanIn={fanIn} fanOut={fanOut} />
     </span>
   );
 }
 
-// Green for what flows in, amber for what flows out — the only two colours
+// Violet for what flows in, cyan for what flows out: the only two colours
 // direction ever gets.
 function Fan({ fanIn, fanOut }: { fanIn: number; fanOut: number }) {
   return (
-    <span className="flex shrink-0 items-center gap-[6px] text-[10px] tabular-nums">
-      <span className="text-incoming" title="Distinct files that import this">
+    <span className="flex shrink-0 items-center gap-1.5 font-mono text-[10px] tabular-nums">
+      <span className="text-violet-soft" title="Distinct files that import this">
         ←{fanIn}
       </span>
-      <span className="text-outgoing" title="Distinct files this imports">
+      <span className="text-cyan" title="Distinct files this imports">
         {fanOut}→
       </span>
     </span>

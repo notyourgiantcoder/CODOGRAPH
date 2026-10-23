@@ -1,11 +1,11 @@
 import { ROLE_IDS } from "../roles.ts";
 import {
   EDGE_KINDS,
+  IMPORT_KINDS,
   SCHEMA_VERSION,
   type ConfigReport,
   type Coverage,
   type Edge,
-  type EdgeKind,
   type ExcludedDirectory,
   type ExcludedReason,
   type OmittedRoute,
@@ -15,7 +15,10 @@ import {
   type Route,
   type SkippedFile,
   type SkipReason,
+  type ImportKind,
   type StatusCounts,
+  type UnresolvedFetch,
+  type UnresolvedFetchReason,
   type UnresolvedImport,
   type UnresolvedReason,
   type WithheldRoutes,
@@ -36,6 +39,7 @@ const UNRESOLVED_REASONS: readonly UnresolvedReason[] = [
   "workspace-package-not-linked",
   "subpath-import-not-found",
 ];
+const UNRESOLVED_FETCH_REASONS: readonly UnresolvedFetchReason[] = ["computed-url", "relative-url", "no-matching-route", "several-files-match"];
 
 export function serializeParseResult(result: ParseResult): string {
   return `${JSON.stringify(result, null, 2)}\n`;
@@ -98,6 +102,7 @@ function parsedFile(value: unknown, at: string): ParsedFile {
     reachedBy: o.reachedBy === null ? null : string(o.reachedBy, `${at}.reachedBy`),
     role: o.role === null ? null : oneOf(o.role, `${at}.role`, ROLE_IDS),
     exports: array(o.exports, `${at}.exports`, string),
+    complexity: positive(o.complexity, `${at}.complexity`),
   };
 }
 
@@ -127,7 +132,7 @@ function project(value: unknown, at: string): Project {
 
 function edge(value: unknown, at: string): Edge {
   const o = object(value, at);
-  return {
+  const result: Edge = {
     source: string(o.source, `${at}.source`),
     target: string(o.target, `${at}.target`),
     kind: oneOf(o.kind, `${at}.kind`, EDGE_KINDS),
@@ -135,6 +140,8 @@ function edge(value: unknown, at: string): Edge {
     specifier: string(o.specifier, `${at}.specifier`),
     line: count(o.line, `${at}.line`),
   };
+  if (result.kind === "fetch" && result.typeOnly) throw new ContractError(`${at}.typeOnly`, "a network call can't be type-only");
+  return result;
 }
 
 function coverage(value: unknown, at: string): Coverage {
@@ -144,6 +151,14 @@ function coverage(value: unknown, at: string): Coverage {
   const byKind = object(imports.byKind, `${at}.imports.byKind`);
   const external = object(imports.external, `${at}.imports.external`);
   const routes = object(o.routes, `${at}.routes`);
+  const fetches = object(o.fetches, `${at}.fetches`);
+  const unresolvedFetches = array(fetches.unresolved, `${at}.fetches.unresolved`, unresolvedFetch);
+  const seen = count(fetches.seen, `${at}.fetches.seen`);
+  const matched = count(fetches.matched, `${at}.fetches.matched`);
+  const externalFetches = count(fetches.external, `${at}.fetches.external`);
+  if (seen !== matched + externalFetches + unresolvedFetches.length) {
+    throw new ContractError(`${at}.fetches.seen`, `${seen} ≠ ${matched} matched + ${externalFetches} external + ${unresolvedFetches.length} unresolved`);
+  }
   return {
     files: {
       found: count(files.found, `${at}.files.found`),
@@ -168,6 +183,13 @@ function coverage(value: unknown, at: string): Coverage {
       excluded: countsKeyedBy(imports.excluded, `${at}.imports.excluded`, EXCLUDED_REASONS),
       unresolvedByReason: countsKeyedBy(imports.unresolvedByReason, `${at}.imports.unresolvedByReason`, UNRESOLVED_REASONS),
       unresolved: array(imports.unresolved, `${at}.imports.unresolved`, unresolvedImport),
+    },
+    fetches: {
+      seen,
+      matched,
+      external: externalFetches,
+      unresolvedByReason: countsKeyedBy(fetches.unresolvedByReason, `${at}.fetches.unresolvedByReason`, UNRESOLVED_FETCH_REASONS),
+      unresolved: unresolvedFetches,
     },
     routes: {
       omitted: array(routes.omitted, `${at}.routes.omitted`, omittedRoute),
@@ -206,9 +228,20 @@ function unresolvedImport(value: unknown, at: string): UnresolvedImport {
   return {
     from: string(o.from, `${at}.from`),
     specifier: string(o.specifier, `${at}.specifier`),
-    kind: oneOf<EdgeKind>(o.kind, `${at}.kind`, EDGE_KINDS),
+    kind: oneOf<ImportKind>(o.kind, `${at}.kind`, IMPORT_KINDS),
     line: count(o.line, `${at}.line`),
     reason: oneOf(o.reason, `${at}.reason`, UNRESOLVED_REASONS),
+    detail: string(o.detail, `${at}.detail`),
+  };
+}
+
+function unresolvedFetch(value: unknown, at: string): UnresolvedFetch {
+  const o = object(value, at);
+  return {
+    from: string(o.from, `${at}.from`),
+    url: string(o.url, `${at}.url`),
+    line: count(o.line, `${at}.line`),
+    reason: oneOf(o.reason, `${at}.reason`, UNRESOLVED_FETCH_REASONS),
     detail: string(o.detail, `${at}.detail`),
   };
 }
@@ -250,6 +283,12 @@ function boolean(value: unknown, at: string): boolean {
 function count(value: unknown, at: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) throw new ContractError(at, "expected a non-negative integer");
   return value;
+}
+
+function positive(value: unknown, at: string): number {
+  const n = count(value, at);
+  if (n === 0) throw new ContractError(at, "expected a positive integer");
+  return n;
 }
 
 function oneOf<T extends string>(value: unknown, at: string, allowed: readonly T[]): T {

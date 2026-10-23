@@ -25,42 +25,47 @@ export function AnalysisRow({ row }: { row: RowData }) {
   const note = progress.status === "complete" ? null : progress.message;
 
   return (
-    <tr className="border-b border-line align-top hover:bg-raised">
-      <td className="truncate px-3 py-1.5 font-mono">
+    <tr className="border-b border-line align-top transition-colors last:border-b-0 hover:bg-ink/[0.03]">
+      <td className="truncate px-4 py-3 font-mono">
         <Link href={`/analyses/${row.id}`} className="block">
           {row.repository ? (
             <>
-              <span className="text-fg-muted">{row.repository.owner}/</span>
-              {row.repository.name}
+              <span className="text-subtle">{row.repository.owner}/</span>
+              <span className="text-fg">{row.repository.name}</span>
             </>
           ) : (
             <span className="text-fg-muted">—</span>
           )}
           {note && (
-            <span className="mt-0.5 block truncate font-sans text-fg-muted" title={note}>
+            <span className="mt-0.5 block truncate font-sans text-[12px] text-subtle" title={note}>
               {stale ? `No progress for over ${STALE_AFTER_MS / 60000} minutes — ${note}` : note}
             </span>
           )}
         </Link>
       </td>
-      <td className="px-3 py-1.5">
-        <span className={`flex items-center gap-1.5 ${progress.status === "queued" ? "text-fg-muted" : "text-fg"}`}>
+      <td className="px-4 py-3">
+        <span
+          // Greyscale, like the mark: violet and cyan mean direction everywhere else.
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[12px] ${
+            progress.status === "queued" ? "border-line text-subtle" : "border-line-strong bg-ink/[0.03] text-fg"
+          }`}
+        >
           <StateMark status={progress.status} stale={stale} />
           {stale ? "stale" : progress.status}
           {progress.status === "running" && !stale && progress.stage && (
-            <span className="text-fg-muted">· {progress.stage}</span>
+            <span className="text-subtle">· {progress.stage}</span>
           )}
         </span>
       </td>
-      <td className="hidden px-3 py-1.5 font-mono text-fg-muted sm:table-cell">
+      <td className="hidden px-4 py-3 font-mono text-[12px] text-subtle sm:table-cell">
         {row.commitSha ? <span title={row.commitSha}>{row.commitSha.slice(0, 7)}</span> : "—"}
       </td>
-      <td className="px-3 py-1.5 text-right text-fg-muted tabular-nums">
+      <td className="px-4 py-3 text-right text-[12px] text-subtle tabular-nums">
         <time dateTime={row.created.iso} title={row.created.iso}>
           {row.created.ago}
         </time>
       </td>
-      <td className="hidden px-3 py-1.5 text-right text-fg-muted tabular-nums sm:table-cell">
+      <td className="hidden px-4 py-3 text-right text-[12px] text-subtle tabular-nums sm:table-cell">
         {row.finished ? (
           <time dateTime={row.finished.iso} title={row.finished.iso}>
             {row.finished.ago}

@@ -229,6 +229,7 @@ export type Database = {
         Row: {
           analysis_id: string
           bytes: number | null
+          complexity: number | null
           exports: string[] | null
           fan_in: number | null
           fan_out: number | null
@@ -245,6 +246,7 @@ export type Database = {
         Insert: {
           analysis_id: string
           bytes?: number | null
+          complexity?: number | null
           exports?: string[] | null
           fan_in?: number | null
           fan_out?: number | null
@@ -261,6 +263,7 @@ export type Database = {
         Update: {
           analysis_id?: string
           bytes?: number | null
+          complexity?: number | null
           exports?: string[] | null
           fan_in?: number | null
           fan_out?: number | null

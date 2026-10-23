@@ -22,8 +22,11 @@ export function Activate() {
   }, [setActive, router]);
 
   return error ? (
-    <p className="text-xs text-fg">Couldn&apos;t set up an organization: {error}</p>
+    <p className="max-w-sm rounded-xl border border-line-strong bg-panel px-4 py-3 text-center text-[13px] text-fg">Couldn&apos;t set up an organization: {error}</p>
   ) : (
-    <p className="text-xs text-fg-muted">Setting up your organization…</p>
+    <p className="flex items-center gap-2 text-[13px] text-muted">
+      <span className="size-1.5 animate-pulse rounded-full bg-violet-soft shadow-[0_0_8px_var(--violet-soft)]" />
+      Setting up your organization…
+    </p>
   );
 }

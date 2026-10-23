@@ -3,11 +3,17 @@
 
 import type { Role } from "../roles.ts";
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
-export type EdgeKind = "import" | "re-export" | "dynamic-import" | "require";
+/** The ways one file loads another's code. */
+export type ImportKind = "import" | "re-export" | "dynamic-import" | "require";
 
-export const EDGE_KINDS: readonly EdgeKind[] = ["import", "re-export", "dynamic-import", "require"];
+export const IMPORT_KINDS: readonly ImportKind[] = ["import", "re-export", "dynamic-import", "require"];
+
+/** An import, or a fetch() call matched to the file declaring the route it calls. */
+export type EdgeKind = ImportKind | "fetch";
+
+export const EDGE_KINDS: readonly EdgeKind[] = [...IMPORT_KINDS, "fetch"];
 
 export type ParsedFile = {
   /** Repository-relative, forward slashes. */
@@ -36,6 +42,8 @@ export type ParsedFile = {
    * lives in the other file, and that file is a re-export edge away.
    */
   exports: string[];
+  /** One plus every branch point written in the file. A count of syntax, not a grade. */
+  complexity: number;
 };
 
 /** The repository root, and every folder below it whose package.json a framework adapter detected. */
@@ -118,9 +126,20 @@ export type UnresolvedImport = {
   from: string;
   /** The literal text; for a non-literal dynamic import, the expression source. */
   specifier: string;
-  kind: EdgeKind;
+  kind: ImportKind;
   line: number;
   reason: UnresolvedReason;
+  detail: string;
+};
+
+export type UnresolvedFetchReason = "computed-url" | "relative-url" | "no-matching-route" | "several-files-match";
+
+export type UnresolvedFetch = {
+  from: string;
+  /** The URL argument as written. */
+  url: string;
+  line: number;
+  reason: UnresolvedFetchReason;
   detail: string;
 };
 
@@ -142,12 +161,21 @@ export type Coverage = {
   };
   imports: {
     total: StatusCounts;
-    byKind: Record<EdgeKind, StatusCounts>;
+    byKind: Record<ImportKind, StatusCounts>;
     external: Record<ExternalKind, number>;
     excluded: Partial<Record<ExcludedReason, number>>;
     unresolvedByReason: Partial<Record<UnresolvedReason, number>>;
     /** Every failure, not a sample. */
     unresolved: UnresolvedImport[];
+  };
+  /** Every fetch() call: matched to a route's file, external (an absolute URL), or unresolved with a reason. */
+  fetches: {
+    seen: number;
+    matched: number;
+    external: number;
+    unresolvedByReason: Partial<Record<UnresolvedFetchReason, number>>;
+    /** Every failure, not a sample. */
+    unresolved: UnresolvedFetch[];
   };
   routes: {
     /** Route declarations left out because the method or the full pattern isn't written in the syntax. */

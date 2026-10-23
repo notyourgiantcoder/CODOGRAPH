@@ -106,6 +106,24 @@ export async function fileAtHeadAction(analysisId: string, path: string, head: s
   }
 }
 
+export type FileSource = { ok: true; text: string } | { ok: false; error: string };
+
+// The Code tab's source: the bytes the parser read, or nothing. GitHub's copy
+// at the analysed commit is only shown when it hashes to what was parsed, so
+// the highlighted lines are the lines the edges were found on.
+export async function fileSourceAction(analysisId: string, path: string): Promise<FileSource> {
+  try {
+    const db = await createServerSupabase();
+    const analysis = await readAnalysis(db, analysisId);
+    const { data: file, error } = await db.from("files").select("hash").eq("analysis_id", analysis.id).eq("path", path).maybeSingle();
+    if (error) throw new Error(`Reading ${path} failed: ${error.message}`);
+    if (!file?.hash) return { ok: false, error: `${path} isn't a parsed file in this analysis` };
+    return { ok: true, text: await sourceAtAnalysedCommit(analysis, path, file.hash)() };
+  } catch (error) {
+    return { ok: false, error: messageOf(error) };
+  }
+}
+
 // Read under the caller's policies: another organization's analysis isn't
 // there, and nothing after this runs for it.
 async function readAnalysis(db: Db, analysisId: string): Promise<Analysis> {

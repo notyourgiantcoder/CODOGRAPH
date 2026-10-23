@@ -4,39 +4,55 @@
  * data-theme on <html> is system | light | dark. color-scheme decides which
  * side of every light-dark() pair applies, so a forced theme beats the OS
  * preference without a second copy of the palette.
+ *
+ * The dark side is the landing page's palette, value for value. The light side
+ * is its daytime counterpart: same violet and cyan, darkened where they sit on
+ * white so text and lines keep their contrast.
  */
 :root {
   color-scheme: light dark;
 
-  /* Dark side is the landing page palette; light side is its daytime
-     counterpart with the same violet. */
-  --canvas: light-dark(#f7f7fa, #090a0d);
-  --surface: light-dark(#ffffff, #111318);
-  --raised: light-dark(#eeeff4, #171a21);
-  /* Opaque, not the landing page's translucent white: nodes use it as a hover
-     fill over raised, and a translucent wash over the dark canvas comes out
-     no lighter than raised itself. */
-  --line: light-dark(#e2e3ea, #262931);
+  /* Surfaces, darkest to lightest in dark mode. */
+  --bg: light-dark(#f7f7fa, #090a0d);
+  --panel: light-dark(#ffffff, #111318);
+  --panel-2: light-dark(#f3f4f8, #171a21);
+  --panel-3: light-dark(#ebedf3, #1d2029);
+  /* The landing page's toolbar and side columns sit a shade off the panel. */
+  --toolbar: light-dark(#fafbfc, #0e1015);
+  --sidebar: light-dark(#fbfbfd, #0f1116);
+  --minimap: light-dark(#f3f4f8, #0d0f13);
+
   --fg: light-dark(#111318, #f4f5f7);
-  --fg-muted: light-dark(#5d6274, #949baa);
-  /* The landing page's soft violet: its deeper #8b5cf6 misses 4.5:1 as small
-     text on the dark panels. Light enough that accent buttons take dark text. */
-  --accent: light-dark(#7c3aed, #a78bfa);
+  --muted: light-dark(#4b5163, #949baa);
+  --subtle: light-dark(#6b7183, #7d8496);
+  --line: light-dark(#e2e3ea, rgb(255 255 255 / 0.07));
+  --line-strong: light-dark(#d3d5de, rgb(255 255 255 / 0.13));
+  /* White in dark mode, black in light: the base of every faint overlay, so
+     the landing page's white washes have a visible light-mode twin. */
+  --ink: light-dark(#000000, #ffffff);
+
+  --violet: light-dark(#7c3aed, #8b5cf6);
+  --violet-soft: light-dark(#7c3aed, #a78bfa);
+  --cyan: light-dark(#0e7fae, #67d5ff);
+  /* Node fills for the selection's neighbours and for impact. */
+  --tint-cyan: light-dark(#e3f4fb, #13202a);
+  --tint-violet: light-dark(#f1ebfe, #1b1728);
+  --tint-impact: light-dark(#d9f0fa, #0f2029);
+
+  --code: light-dark(#f6f7f9, #0c0e12);
+  --code-fg: light-dark(#2b2f3a, #d7dae2);
+  --code-dim: light-dark(#9aa0ad, #4b5060);
+
+  /* Older names the progress, route and explanation screens use. */
+  --canvas: var(--bg);
+  --surface: var(--panel);
+  --raised: var(--panel-2);
+  --fg-muted: var(--muted);
+  --accent: var(--violet-soft);
   --accent-fg: light-dark(#ffffff, #090a0d);
-
-  /* Direction, as on the landing page: violet for files that import this
-     one, cyan for files it imports. The light cyan is darkened to hold 3:1
-     against the canvas. */
-  --incoming: light-dark(#7c3aed, #a78bfa);
-  --outgoing: light-dark(#228cb8, #67d5ff);
-
-  /* File kinds, from the landing page's category palette. Kept clear of the
-     violet accent and the two direction hues. */
-  --kind-1: #3987e5;
-  --kind-2: #199e70;
-  --kind-3: #c98500;
-  --kind-4: #d55181;
-
+  /* Direction: violet for files that import the selection, cyan for files it imports. */
+  --incoming: var(--violet-soft);
+  --outgoing: var(--cyan);
   --edge: light-dark(rgb(93 98 116 / 0.4), rgb(148 155 170 / 0.34));
 }
 
@@ -49,50 +65,241 @@
 }
 
 @theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-panel-3: var(--panel-3);
+  --color-toolbar: var(--toolbar);
+  --color-sidebar: var(--sidebar);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --color-cyan: var(--cyan);
+  --color-tint-cyan: var(--tint-cyan);
+  --color-tint-violet: var(--tint-violet);
+  --color-tint-impact: var(--tint-impact);
+  --color-code: var(--code);
+  --color-code-fg: var(--code-fg);
+  --color-code-dim: var(--code-dim);
+
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
   --color-raised: var(--raised);
-  --color-line: var(--line);
-  --color-fg: var(--fg);
   --color-fg-muted: var(--fg-muted);
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
   --color-incoming: var(--incoming);
   --color-outgoing: var(--outgoing);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
 }
 
-/*
- * Every size is in rem, so the root size is the one dial. Up to a 1440px-wide
- * viewport it's 16px; past that it grows in proportion, so a large display
- * shows the laptop layout scaled up rather than the same small layout
- * floating in empty space. Capped for very wide windows.
- */
-html {
-  font-size: clamp(16px, 100vw / 90, 32px);
+@theme {
+  --animate-node-in: node-in 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-pop: pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+  --animate-pulse-ring: pulse-ring 1.8s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;
+  --animate-dot: dot 1.2s ease-in-out infinite;
+  --animate-float: float 7s ease-in-out infinite;
+
+  @keyframes node-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px) scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes pop {
+    0% {
+      transform: scale(0.92);
+    }
+    60% {
+      transform: scale(1.04);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  @keyframes pulse-ring {
+    0% {
+      opacity: 0.7;
+      transform: scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(1.18, 1.6);
+    }
+  }
+  @keyframes dot {
+    0%,
+    80%,
+    100% {
+      opacity: 0.25;
+      transform: translateY(0);
+    }
+    40% {
+      opacity: 1;
+      transform: translateY(-2px);
+    }
+  }
+  @keyframes float {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      transform: translate3d(0, -10px, 0);
+    }
+  }
 }
 
-body {
-  background: var(--canvas);
-  color: var(--fg);
-  font-family: var(--font-sans);
-  font-size: 0.8125rem;
-  font-feature-settings: "ss01", "cv11";
+/* In the base layer, so a utility like outline-none still wins over them. */
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  ::selection {
+    background: rgb(139 92 246 / 0.35);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--violet-soft);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
 }
 
-::selection {
-  background: rgb(139 92 246 / 0.35);
+/* ── Surfaces ─────────────────────────────────────────────────────────── */
+
+.grid-backdrop {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--ink) 4.5%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--ink) 4.5%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
 }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.noise-fade {
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 30%, transparent 75%);
 }
 
-/* React Flow's base stylesheet leaves edges unstyled; they're greyscale until
-   a selection gives them a direction. */
-.react-flow__edge-path {
-  stroke: var(--edge);
-  fill: none;
+.text-gradient {
+  background: linear-gradient(180deg, light-dark(#111318, #ffffff) 10%, light-dark(#4b5163, #b9bdc9) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.text-accent-gradient {
+  background: linear-gradient(90deg, var(--violet-soft) 0%, var(--cyan) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hairline-top {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink) 16%, transparent), transparent);
+}
+
+.panel-shadow {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ink) 6%, transparent),
+    0 30px 80px -20px light-dark(rgb(0 0 0 / 0.12), rgb(0 0 0 / 0.7)),
+    0 0 120px -40px rgb(139 92 246 / 0.35);
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ink) 12%, transparent) transparent;
+}
+
+/* ── Code ─────────────────────────────────────────────────────────────── */
+
+.tok-kw {
+  color: light-dark(#7c3aed, #c4a7ff);
+}
+.tok-str {
+  color: light-dark(#0f7a43, #8fe3b0);
+}
+.tok-com {
+  color: light-dark(#8a90a0, #6b7183);
+}
+.tok-fn {
+  color: light-dark(#0369a1, #7dd3fc);
+}
+.tok-num {
+  color: light-dark(#b45309, #f5b97a);
+}
+.tok-type {
+  color: light-dark(#a16207, #f0c674);
+}
+
+/* ── React Flow ───────────────────────────────────────────────────────── */
+
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-node-border-radius: 10px;
+  --xy-minimap-background-color: var(--minimap);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--bg) 72%, transparent);
+  --xy-minimap-mask-stroke-color: rgb(139 92 246 / 0.6);
+  --xy-minimap-mask-stroke-width: 2;
+  --xy-attribution-background-color: transparent;
+}
+
+.react-flow__minimap {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__edges {
+  pointer-events: none;
+}
+
+.edge-flow {
+  stroke-dasharray: 5 9;
+  animation: edge-flow 0.9s linear infinite;
+}
+
+@keyframes edge-flow {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+  .edge-flow {
+    animation: none !important;
+    stroke-dasharray: none;
+  }
 }

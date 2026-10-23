@@ -32,59 +32,79 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-4 border-b border-line px-3">
-        <h1 className="text-[13px] font-semibold">{orgName}</h1>
-        <span className="text-xs text-fg-muted tabular-nums">
-          {rows.length === LIST_LIMIT
-            ? `Latest ${LIST_LIMIT} analyses`
-            : `${rows.length} ${rows.length === 1 ? "analysis" : "analyses"}`}
-        </span>
-        <SubmitForm />
-        {rows.length > 0 && (
-          <ul className="ml-auto flex items-center gap-3 text-xs text-fg-muted tabular-nums">
-            {TALLY_ORDER.filter((s) => counts.has(s)).map((s) => (
-              <li key={s} className="flex items-center gap-1.5">
-                <StateMark status={s === "stale" ? "running" : s} stale={s === "stale"} />
-                {counts.get(s)} {s}
-              </li>
-            ))}
-          </ul>
-        )}
+    <div className="relative flex-1 overflow-y-auto">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] overflow-hidden" aria-hidden>
+        <div className="grid-backdrop noise-fade absolute inset-0" />
+        <div className="absolute left-1/2 top-[-120px] h-[420px] w-[820px] -translate-x-1/2 rounded-full bg-[radial-gradient(closest-side,rgba(139,92,246,0.22),transparent)]" />
       </div>
 
-      {rows.length === 0 ? (
-        <div className="px-3 py-10 text-xs text-fg-muted">
-          <p className="text-fg">No analyses yet.</p>
-          <p className="mt-1">Paste a public GitHub repository above to map it.</p>
+      <div className="relative mx-auto max-w-[1180px] px-4 pb-20 pt-14 sm:px-6 sm:pt-20">
+        <div className="mx-auto max-w-2xl text-center">
+          <p className="inline-flex items-center gap-2 rounded-full border border-line-strong bg-ink/[0.03] px-3 py-1 font-mono text-[11px] uppercase tracking-[0.2em] text-muted">
+            <span className="size-1.5 rounded-full bg-cyan shadow-[0_0_8px_var(--cyan)]" />
+            {orgName}
+          </p>
+          <h1 className="mt-5 text-balance text-4xl font-semibold tracking-[-0.04em] text-gradient sm:text-5xl">
+            Map a repository. <span className="text-accent-gradient">Before you change it.</span>
+          </h1>
+          <p className="mx-auto mt-4 max-w-lg text-pretty text-base text-muted">
+            Paste a public TypeScript or JavaScript repository. Codograph parses every file and draws what really depends on what.
+          </p>
+          <SubmitForm />
         </div>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-auto">
-          <table className="w-full table-fixed border-collapse text-xs">
-            <colgroup>
-              <col />
-              <col className="w-28" />
-              <col className="hidden w-20 sm:table-column" />
-              <col className="w-20" />
-              <col className="hidden w-20 sm:table-column" />
-            </colgroup>
-            <thead className="sticky top-0 bg-canvas text-left text-fg-muted">
-              <tr className="h-7 border-b border-line">
-                <th className="px-3 font-normal">Repository</th>
-                <th className="px-3 font-normal">State</th>
-                <th className="hidden px-3 font-normal sm:table-cell">Commit</th>
-                <th className="px-3 text-right font-normal">Started</th>
-                <th className="hidden px-3 text-right font-normal sm:table-cell">Finished</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <AnalysisRow key={row.id} row={row} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+
+        <section className="mt-14">
+          <div className="mb-3 flex flex-wrap items-center gap-3">
+            <h2 className="text-[15px] font-semibold tracking-tight text-fg">Analyses</h2>
+            <span className="font-mono text-[11px] text-subtle tabular-nums">
+              {rows.length === LIST_LIMIT ? `latest ${LIST_LIMIT}` : `${rows.length} ${rows.length === 1 ? "analysis" : "analyses"}`}
+            </span>
+            {rows.length > 0 && (
+              <ul className="ml-auto flex flex-wrap items-center gap-1.5 text-[12px] text-muted tabular-nums">
+                {TALLY_ORDER.filter((s) => counts.has(s)).map((s) => (
+                  <li key={s} className="inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1">
+                    <StateMark status={s === "stale" ? "running" : s} stale={s === "stale"} />
+                    {counts.get(s)} {s}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {rows.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-line-strong bg-ink/[0.015] px-6 py-14 text-center">
+              <p className="text-sm font-medium text-fg">No analyses yet.</p>
+              <p className="mt-1 text-[13px] text-subtle">Paste a public GitHub repository above to map it.</p>
+            </div>
+          ) : (
+            <div className="panel-shadow overflow-hidden rounded-2xl border border-line-strong bg-panel">
+              <table className="w-full table-fixed border-collapse text-[13px]">
+                <colgroup>
+                  <col />
+                  <col className="w-36" />
+                  <col className="hidden w-24 sm:table-column" />
+                  <col className="w-24" />
+                  <col className="hidden w-24 sm:table-column" />
+                </colgroup>
+                <thead className="bg-toolbar text-left text-[11px] font-medium uppercase tracking-wider text-subtle">
+                  <tr className="h-10 border-b border-line">
+                    <th className="px-4 font-medium">Repository</th>
+                    <th className="px-4 font-medium">State</th>
+                    <th className="hidden px-4 font-medium sm:table-cell">Commit</th>
+                    <th className="px-4 text-right font-medium">Started</th>
+                    <th className="hidden px-4 text-right font-medium sm:table-cell">Finished</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <AnalysisRow key={row.id} row={row} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

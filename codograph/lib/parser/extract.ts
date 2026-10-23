@@ -1,8 +1,8 @@
 import { Node, SyntaxKind, type ImportClause, type SourceFile } from "ts-morph";
-import type { EdgeKind } from "./types.ts";
+import type { ImportKind } from "./types.ts";
 
 export type RawImport = {
-  kind: EdgeKind;
+  kind: ImportKind;
   line: number;
   typeOnly: boolean;
 } & (
@@ -58,7 +58,7 @@ export function extractImports(sourceFile: SourceFile): RawImport[] {
   // so nothing here sees it a second time.
   for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
     const callee = call.getExpression();
-    const kind: EdgeKind | null =
+    const kind: ImportKind | null =
       callee.getKind() === SyntaxKind.ImportKeyword
         ? "dynamic-import"
         : Node.isIdentifier(callee) && callee.getText() === "require"
@@ -75,6 +75,113 @@ export function extractImports(sourceFile: SourceFile): RawImport[] {
   }
 
   return found;
+}
+
+/** A path segment of a fetch() URL: written out, or holding a template placeholder. */
+export type UrlSegment = { static: string } | { placeholder: true };
+
+export type RawFetch = {
+  line: number;
+  /** The URL argument as written. */
+  text: string;
+  /** Upper case. Null when the options set a method that isn't written as a literal. */
+  method: string | null;
+  url:
+    | { form: "path"; segments: UrlSegment[] }
+    | { form: "absolute" }
+    | { form: "relative" }
+    | { form: "computed" };
+};
+
+// The global fetch, called directly or through window, globalThis or self.
+const FETCH_RECEIVERS = new Set(["window", "globalThis", "self"]);
+
+/**
+ * Every fetch() call, with its URL and method read from the syntax. Only what
+ * is written in the call counts: a URL held in a variable is computed, because
+ * following the variable would mean deciding which value it has at runtime.
+ */
+export function extractFetches(sourceFile: SourceFile): RawFetch[] {
+  const found: RawFetch[] = [];
+  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const callee = call.getExpression();
+    const isFetch =
+      (Node.isIdentifier(callee) && callee.getText() === "fetch") ||
+      (Node.isPropertyAccessExpression(callee) &&
+        callee.getName() === "fetch" &&
+        FETCH_RECEIVERS.has(callee.getExpression().getText()));
+    if (!isFetch) continue;
+    const [urlArgument, options] = call.getArguments();
+    if (!urlArgument) continue;
+    found.push({
+      line: call.getStartLineNumber(),
+      text: urlArgument.getText(),
+      method: fetchMethod(options),
+      url: fetchUrl(urlArgument),
+    });
+  }
+  return found;
+}
+
+// Placeholders are kept as whole segments; the query string and fragment never
+// choose a route, so they're dropped along with anything placed in them.
+function fetchUrl(argument: Node): RawFetch["url"] {
+  let written: (string | null)[];
+  if (Node.isStringLiteral(argument) || Node.isNoSubstitutionTemplateLiteral(argument)) {
+    written = [argument.getLiteralValue()];
+  } else if (Node.isTemplateExpression(argument)) {
+    written = [argument.getHead().getLiteralText()];
+    for (const span of argument.getTemplateSpans()) written.push(null, span.getLiteral().getLiteralText());
+  } else {
+    return { form: "computed" };
+  }
+
+  const first = written[0] ?? "";
+  if (first === "" && written.length > 1) return { form: "computed" }; // `${base}/api/…`
+  if (/^[a-z][a-z0-9+.-]*:/i.test(first) || first.startsWith("//")) return { form: "absolute" };
+  if (!first.startsWith("/")) return { form: "relative" };
+
+  const segments: UrlSegment[] = [];
+  let current = "";
+  let placeholder = false;
+  const close = () => {
+    segments.push(placeholder ? { placeholder: true } : { static: current });
+    current = "";
+    placeholder = false;
+  };
+  outer: for (const part of written) {
+    if (part === null) {
+      placeholder = true;
+      continue;
+    }
+    for (const char of part) {
+      if (char === "?" || char === "#") break outer;
+      if (char === "/") close();
+      else current += char;
+    }
+  }
+  close();
+  // The leading "/" opens an empty first segment; a trailing "/" closes an empty last one.
+  return { form: "path", segments: segments.slice(1).filter((s, i, all) => !(i === all.length - 1 && "static" in s && s.static === "")) };
+}
+
+function fetchMethod(options: Node | undefined): string | null {
+  if (!options) return "GET";
+  if (!Node.isObjectLiteralExpression(options)) return null;
+  let method = "GET";
+  for (const property of options.getProperties()) {
+    if (Node.isSpreadAssignment(property)) return null;
+    if (Node.isShorthandPropertyAssignment(property) && property.getName() === "method") return null;
+    if (!Node.isPropertyAssignment(property)) continue;
+    const name = property.getNameNode();
+    const key = Node.isIdentifier(name) ? name.getText() : literalText(name);
+    if (key === null) return null; // a computed key could be "method"
+    if (key !== "method") continue;
+    const value = literalText(property.getInitializer());
+    if (value === null) return null;
+    method = value.toUpperCase();
+  }
+  return method;
 }
 
 /** What `module.exports = <value>` is called when the value's own names can't all be read. */

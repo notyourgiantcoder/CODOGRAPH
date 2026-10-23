@@ -1,7 +1,9 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { Project, ts } from "ts-morph";
-import { extractExports, extractImports } from "./extract.ts";
+import { complexity } from "./complexity.ts";
+import { extractExports, extractFetches, extractImports, type RawFetch } from "./extract.ts";
+import { createFetchMatcher } from "./fetches.ts";
 import { dedupeEdges, fanCounts } from "./graph.ts";
 import { createResolver } from "./resolve.ts";
 import {
@@ -86,9 +88,13 @@ export function parseSelection({ root, walk }: Selection): ParseResult {
   };
   const rawEdges: Edge[] = [];
   const exportsOf = new Map<string, string[]>();
+  const complexityOf = new Map<string, number>();
+  const fetchCalls: { from: string; call: RawFetch }[] = [];
 
   for (const { candidate, sourceFile } of parsed) {
     exportsOf.set(candidate.path, extractExports(sourceFile));
+    complexityOf.set(candidate.path, complexity(sourceFile));
+    for (const call of extractFetches(sourceFile)) fetchCalls.push({ from: candidate.path, call });
     for (const found of extractImports(sourceFile)) {
       const specifier = found.literal ? found.specifier : found.expression;
       const outcome: ImportStatus = found.literal
@@ -136,10 +142,30 @@ export function parseSelection({ root, walk }: Selection): ParseResult {
     }
   }
 
-  const edges = dedupeEdges(rawEdges);
+  const importEdges = dedupeEdges(rawEdges);
   const paths = parsed.map((entry) => entry.candidate.path);
-  const fan = fanCounts(paths, edges);
+  // Fan-in and fan-out count imports only; a network call isn't loading the other file's code.
+  const fan = fanCounts(paths, importEdges);
   const conventions = applyAdapters(walk, parsed, skipped);
+
+  // fetch() calls can only be matched once every route is known.
+  const matchFetch = createFetchMatcher(conventions.routes);
+  const fetches: Coverage["fetches"] = { seen: 0, matched: 0, external: 0, unresolvedByReason: {}, unresolved: [] };
+  const fetchEdges: Edge[] = [];
+  for (const { from, call } of fetchCalls) {
+    fetches.seen++;
+    const outcome = matchFetch(call);
+    if (outcome.status === "external") {
+      fetches.external++;
+    } else if (outcome.status === "unresolved") {
+      fetches.unresolvedByReason[outcome.reason] = (fetches.unresolvedByReason[outcome.reason] ?? 0) + 1;
+      fetches.unresolved.push({ from, url: call.text, line: call.line, reason: outcome.reason, detail: outcome.detail });
+    } else {
+      fetches.matched++;
+      fetchEdges.push({ source: from, target: outcome.target, kind: "fetch", typeOnly: false, specifier: call.text, line: call.line });
+    }
+  }
+  const edges = dedupeEdges([...importEdges, ...fetchEdges]);
   const files: ParsedFile[] = parsed
     .map(({ candidate }) => ({
       path: candidate.path,
@@ -152,6 +178,7 @@ export function parseSelection({ root, walk }: Selection): ParseResult {
       reachedBy: candidate.reachedBy,
       role: conventions.roles.get(candidate.path) ?? null,
       exports: exportsOf.get(candidate.path) ?? [],
+      complexity: complexityOf.get(candidate.path) ?? 1,
     }))
     .sort((a, b) => a.path.localeCompare(b.path));
 
@@ -175,6 +202,7 @@ export function parseSelection({ root, walk }: Selection): ParseResult {
         excludedDirectories: walk.excludedDirectories,
       },
       imports: coverage,
+      fetches,
       routes: { omitted: conventions.omitted, withheld: conventions.withheld },
     },
     configs: resolver.configs(),

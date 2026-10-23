@@ -43,6 +43,10 @@ export type MapEdge = {
   targetHandle: string | null;
   /** How many file-level edges this one line stands for. */
   count: number;
+  /** Every edge it stands for is a type-only import, erased before the code runs. */
+  typeOnly: boolean;
+  /** Every edge it stands for is a network call rather than an import. */
+  network: boolean;
 };
 
 export type Endpoint = { object: string; handle: string | null };
@@ -64,13 +68,23 @@ export function buildView(
   folding: Folding,
   /** Open groups, each with its scroll offset. Clamped here, so any number is safe. */
   open: ReadonlyMap<string, number>,
+  /**
+   * Files filtered off the canvas. They leave their group's rows and count, a
+   * group left with none leaves the canvas, and their edges aren't drawn. The
+   * folding itself stays the whole repository's, so filtering never reshapes
+   * which folders are boxes.
+   */
+  hidden: ReadonlySet<string> = new Set(),
 ): MapView {
   const byPath = new Map(files.map((f) => [f.path, f]));
   const fan = groupFan(folding, edges);
-  const groupLabels = shortestUniqueLabels(folding.groups.map((g) => g.dir));
+  const shownGroups = folding.groups
+    .map((g) => ({ dir: g.dir, files: g.files.filter((f) => !hidden.has(f)) }))
+    .filter((g) => g.files.length > 0);
+  const groupLabels = shortestUniqueLabels(shownGroups.map((g) => g.dir));
 
   const windows = new Map<string, { ranked: string[]; offset: number; shown: string[] }>();
-  for (const g of folding.groups) {
+  for (const g of shownGroups) {
     const requested = open.get(groupId(g.dir));
     if (requested === undefined) continue;
     const ranked = rankGroupFiles(g, byPath);
@@ -80,7 +94,7 @@ export function buildView(
   const rowLabels = shortestUniqueLabels([...windows.values()].flatMap((w) => w.shown));
   const widestLabels = shortestUniqueLabels([...windows.values()].flatMap((w) => w.ranked));
 
-  const objects = folding.groups.map((g): MapObject => {
+  const objects = shownGroups.map((g): MapObject => {
     const common: Common = {
       id: groupId(g.dir),
       dir: g.dir,
@@ -109,7 +123,7 @@ export function buildView(
   });
 
   const endpointOf = new Map<string, Endpoint>();
-  for (const g of folding.groups) {
+  for (const g of shownGroups) {
     const object = groupId(g.dir);
     const w = windows.get(g.dir);
     if (!w) {
@@ -124,6 +138,7 @@ export function buildView(
 
   const merged = new Map<string, MapEdge>();
   for (const e of edges) {
+    if (hidden.has(e.source) || hidden.has(e.target)) continue;
     const from = endpointOf.get(e.source);
     const to = endpointOf.get(e.target);
     if (!from || !to) throw new Error(`Edge ${e.source} → ${e.target} has an endpoint outside the folding`);
@@ -132,8 +147,12 @@ export function buildView(
     if (from.object === to.object) continue;
     const id = `${from.object}|${from.handle ?? ""}>${to.object}|${to.handle ?? ""}`;
     const existing = merged.get(id);
-    if (existing) existing.count++;
-    else
+    const network = e.kind === "fetch";
+    if (existing) {
+      existing.count++;
+      existing.typeOnly &&= e.typeOnly;
+      existing.network &&= network;
+    } else
       merged.set(id, {
         id,
         source: from.object,
@@ -141,6 +160,8 @@ export function buildView(
         target: to.object,
         targetHandle: to.handle,
         count: 1,
+        typeOnly: e.typeOnly,
+        network,
       });
   }
 
@@ -150,7 +171,7 @@ export function buildView(
 // Rows most depended on come first, so an unscrolled panel shows the files
 // that matter most. Exported so anything scrolling a panel to a file finds it
 // at the index the panel will put it.
-export function rankGroupFiles(group: Group, byPath: ReadonlyMap<string, ParsedFile>): string[] {
+export function rankGroupFiles(group: Pick<Group, "files">, byPath: ReadonlyMap<string, ParsedFile>): string[] {
   return [...group.files].sort(
     (a, b) => (byPath.get(b)?.fanIn ?? 0) - (byPath.get(a)?.fanIn ?? 0) || a.localeCompare(b),
   );

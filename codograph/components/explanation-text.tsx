@@ -16,14 +16,14 @@ const FENCE = /^\s*```/;
 export function ExplanationText({ text, isPath, onPath }: { text: string; isPath: (path: string) => boolean; onPath: (path: string) => ReactNode }) {
   const inline = (s: string) => renderInline(s, isPath, onPath);
   return (
-    <div className="space-y-2 text-[12px] leading-[18px]">
+    <div className="space-y-2.5 text-[13px] leading-relaxed text-fg/90">
       {blocks(text).map((b, i) =>
         b.kind === "paragraph" ? (
           <p key={i}>{inline(b.text)}</p>
         ) : (
           <ul key={i} className="space-y-0.5 pl-3">
             {b.items.map((item, j) => (
-              <li key={j} className="relative before:absolute before:-left-2.5 before:text-fg-muted before:content-['–']">
+              <li key={j} className="relative before:absolute before:-left-2.5 before:text-subtle before:content-['–']">
                 {inline(item)}
               </li>
             ))}
@@ -85,14 +85,14 @@ function renderInline(text: string, isPath: (path: string) => boolean, onPath: (
         isPath(inner) ? (
           <span key={`c${at}`}>{onPath(inner)}</span>
         ) : (
-          <code key={`c${at}`} className="rounded-[2px] bg-raised px-1 font-mono text-[11px]">
+          <code key={`c${at}`} className="rounded-md border border-line bg-ink/[0.03] px-1 py-px font-mono text-[11.5px]">
             {inner}
           </code>
         ),
       );
     } else {
       out.push(
-        <strong key={`b${at}`} className="font-semibold">
+        <strong key={`b${at}`} className="font-semibold text-fg">
           {renderInline(bold ?? boldAlt ?? "", isPath, onPath)}
         </strong>,
       );

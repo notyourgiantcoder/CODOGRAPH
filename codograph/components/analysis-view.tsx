@@ -1,41 +1,26 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  explainFileAction,
-  explainFolderAction,
-  fileAtHeadAction,
-  repositoryHeadAction,
-  type HeadResult,
-} from "@/app/(workspace)/analyses/[id]/actions";
-import { foldDirectories } from "@/lib/graph/fold";
-import type { Selection } from "@/lib/graph/highlight";
-import type { Direction } from "@/lib/graph/reach";
-import { clampOffset, groupId, MAX_ROWS, rankGroupFiles } from "@/lib/graph/view";
+import { motion } from "motion/react";
+import { Maximize2, Network, RotateCcw, Route as RouteIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useId, useState } from "react";
+import { DependencyMap } from "@/components/map/dependency-map";
+import { RerunButton } from "@/components/progress/rerun-button";
+import { IconButton } from "@/components/ui/primitives";
+import { ToastProvider, useToast } from "@/components/ui/toast";
+import { WorkspaceProvider, useWorkspace, type RepositoryFacts } from "@/components/workspace/context";
+import { Explorer } from "@/components/workspace/explorer";
+import { CategoryFilters } from "@/components/workspace/filters";
+import { Inspector } from "@/components/workspace/inspector";
+import { FileSearch } from "@/components/workspace/search";
+import { cn } from "@/lib/cn";
 import type { Coverage, Edge, ParsedFile, Route } from "@/lib/parser/types";
 import type { ModelRole } from "@/lib/roles";
-import { CategoryRail } from "./category-rail";
-import { DetailPane, type RepositoryFacts, type Tab } from "./detail-pane";
-import { targetKey, type ExplainTarget, type ExplanationState, type Freshness } from "./explanation-panel";
-import { DependencyMap } from "./map/dependency-map";
 import { RouteTable } from "./route-table";
-import { Shell } from "./shell";
 
-// Owns what the map, the rail and the pane share: which folders are open,
-// what's selected, what's hovered, which category is picked, and what the pane
-// has open. Everything either side
-// shows is derived from the parse output already in the browser, so nothing
-// here makes a request except the one Explain asks for.
-export function AnalysisView({
-  files,
-  edges,
-  routes,
-  routeCoverage,
-  modelRoles: storedModelRoles,
-  analysisId,
-  commitSha,
-  repository,
-}: {
+// The landing page's playground, on a real repository: toolbar on top,
+// explorer on the left, the map in the middle, the inspector on the right.
+export function AnalysisView(props: {
   files: ParsedFile[];
   edges: Edge[];
   routes: Route[];
@@ -44,216 +29,143 @@ export function AnalysisView({
   modelRoles: Record<string, ModelRole>;
   analysisId: string;
   commitSha: string;
-  repository: Omit<RepositoryFacts, "routes">;
+  repository: RepositoryFacts;
 }) {
-  const folding = useMemo(() => foldDirectories(files), [files]);
-  const byPath = useMemo(() => new Map(files.map((f) => [f.path, f])), [files]);
-  const [open, setOpen] = useState<ReadonlyMap<string, number>>(() => new Map());
-  const [refit, setRefit] = useState(0);
-  const [selection, setSelection] = useState<Selection>(null);
-  const [hover, setHover] = useState<Selection>(null);
-  // Held here rather than in the pane so it outlives every change of selection.
-  const [tab, setTab] = useState<Tab>("structure");
-  // Likewise, so the same walk shows for each file while comparing them.
-  const [walk, setWalk] = useState<Direction | null>(null);
-  const [insightsOpen, setInsightsOpen] = useState(false);
-  const [category, setCategory] = useState<string | null>(null);
-  // The centre column shows the map or the route table; the rail and the pane
-  // keep working on either.
-  const [centre, setCentre] = useState<"map" | "routes">("map");
-  // Explanations fetched on this page, by file or folder, so moving the
-  // selection away and back finds the answer still there without asking again.
-  const [explanations, setExplanations] = useState<ReadonlyMap<string, ExplanationState>>(() => new Map());
-  const [freshness, setFreshness] = useState<ReadonlyMap<string, Freshness>>(() => new Map());
-  const [modelRoles, setModelRoles] = useState<ReadonlyMap<string, ModelRole>>(() => new Map(Object.entries(storedModelRoles)));
-  // The repository's latest commit, asked for once per page load: GitHub's
-  // unauthenticated API allows few requests, and one answer serves every file.
-  const head = useRef<Promise<HeadResult> | null>(null);
-
-  const explain = useCallback(
-    (target: ExplainTarget) => {
-      const key = targetKey(target);
-      setExplanations((prev) => new Map(prev).set(key, { status: "loading" }));
-      setFreshness((prev) => new Map(prev).set(key, { status: "checking" }));
-
-      void (async () => {
-        const result = await (target.kind === "file" ? explainFileAction(analysisId, target.path) : explainFolderAction(analysisId, target.dir));
-        setExplanations((prev) => new Map(prev).set(key, result.ok ? { status: "done", result } : { status: "error", error: result.error }));
-        if (result.ok && target.kind === "file" && result.labelled?.role) {
-          const role = result.labelled.role;
-          setModelRoles((prev) => new Map(prev).set(target.path, role));
-        }
-      })();
-
-      // Alongside the explanation, not in front of it: a cached answer shows
-      // at once, and whether it's current arrives when GitHub answers.
-      void (async () => {
-        const latest = await (head.current ??= repositoryHeadAction(analysisId));
-        if (!latest.ok) head.current = null;
-        let state: Freshness;
-        if (!latest.ok) state = { status: "unknown", error: latest.error };
-        else if (latest.head === latest.analysed) state = { status: "current" };
-        else if (target.kind === "group") state = { status: "moved", head: latest.head, file: null };
-        else {
-          const file = await fileAtHeadAction(analysisId, target.path, latest.head);
-          state = file.ok ? { status: "moved", head: latest.head, file: file.state } : { status: "unknown", error: file.error };
-        }
-        setFreshness((prev) => new Map(prev).set(key, state));
-      })();
-    },
-    [analysisId],
-  );
-
-  const toggleCategory = useCallback((c: string) => setCategory((prev) => (prev === c ? null : c)), []);
-
-  // Clicking a folded node is the one click it has, so opening it also selects
-  // the panel it becomes.
-  const openGroup = useCallback((id: string) => {
-    setOpen((prev) => new Map(prev).set(id, 0));
-    setRefit((n) => n + 1);
-    setSelection({ kind: "group", id });
-  }, []);
-
-  const closeGroup = useCallback(
-    (id: string) => {
-      setOpen((prev) => {
-        const next = new Map(prev);
-        next.delete(id);
-        return next;
-      });
-      // A selection inside a folded-away panel has nothing left to point at.
-      setSelection((prev) => {
-        if (prev?.kind === "group") return prev.id === id ? null : prev;
-        if (prev?.kind === "file") {
-          const dir = folding.groupOf.get(prev.path);
-          return dir !== undefined && groupId(dir) === id ? null : prev;
-        }
-        return prev;
-      });
-    },
-    [folding],
-  );
-
-  const toggleFile = useCallback((path: string) => {
-    setSelection((prev) => (prev?.kind === "file" && prev.path === path ? null : { kind: "file", path }));
-  }, []);
-
-  const scroll = useCallback((id: string, offset: number) => {
-    setOpen((prev) => (prev.has(id) ? new Map(prev).set(id, Math.max(0, offset)) : prev));
-  }, []);
-
-  // A path clicked in the pane becomes the selection on the map, and the map
-  // shows it: its folder opens if it's folded, and scrolls if the row is
-  // outside the window. A folder that's already showing the row stays put.
-  const reveal = useCallback(
-    (path: string) => {
-      const dir = folding.groupOf.get(path);
-      const group = folding.groups.find((g) => g.dir === dir);
-      if (dir === undefined || !group) return;
-      const id = groupId(dir);
-      const ranked = rankGroupFiles(group, byPath);
-      const index = ranked.indexOf(path);
-      const current = open.get(id);
-      const first = current === undefined ? null : clampOffset(current, ranked.length);
-      if (first === null || index < first || index >= first + MAX_ROWS) {
-        setOpen(new Map(open).set(id, index - Math.floor(MAX_ROWS / 2)));
-        if (current === undefined) setRefit((n) => n + 1);
-      }
-      setSelection({ kind: "file", path });
-      // The row under the pointer is about to be replaced, and a removed
-      // element never reports the pointer leaving it.
-      setHover(null);
-    },
-    [folding, byPath, open],
-  );
-
-  const deselect = useCallback(() => setSelection(null), []);
-
   return (
-    <Shell
-      rail={
-        <CategoryRail files={files} modelRoles={modelRoles} frameworks={repository.projects.map((p) => p.adapter)} active={category} onToggle={toggleCategory} />
-      }
-      map={
-        <div className="absolute inset-0 flex flex-col">
-          <div role="tablist" className="flex h-7 shrink-0 items-end gap-3 border-b border-line bg-surface px-3 text-[11px]">
-            <CentreTab label="Map" on={centre === "map"} onClick={() => setCentre("map")} />
-            <CentreTab label="Routes" count={routes.length} on={centre === "routes"} onClick={() => setCentre("routes")} />
-          </div>
-          <div className="relative min-h-0 flex-1">
-            {/* The map stays mounted under the table, so switching back keeps its viewport. */}
-            <div className={`absolute inset-0 ${centre === "map" ? "" : "invisible"}`}>
-              <DependencyMap
-                files={files}
-                edges={edges}
-                modelRoles={modelRoles}
-                folding={folding}
-                open={open}
-                selection={selection}
-                hover={hover}
-                refit={refit}
-                category={category}
-                onOpen={openGroup}
-                onClose={closeGroup}
-                onSelectFile={toggleFile}
-                onScroll={scroll}
-                onHover={setHover}
-                onDeselect={deselect}
-              />
-            </div>
-            {centre === "routes" && (
-              <RouteTable
-                routes={routes}
-                coverage={routeCoverage}
-                selection={selection}
-                hover={hover}
-                onReveal={reveal}
-                onHover={setHover}
-              />
-            )}
-          </div>
-        </div>
-      }
-      detail={
-        <DetailPane
-          files={files}
-          byPath={byPath}
-          edges={edges}
-          folding={folding}
-          repository={{ ...repository, routes: routes.length }}
-          selection={selection}
-          hover={hover}
-          tab={tab}
-          onTab={setTab}
-          walk={walk}
-          onWalk={setWalk}
-          insightsOpen={insightsOpen}
-          onInsightsOpen={setInsightsOpen}
-          onReveal={reveal}
-          onHover={setHover}
-          modelRoles={modelRoles}
-          analysisId={analysisId}
-          commitSha={commitSha}
-          explanations={explanations}
-          freshness={freshness}
-          onExplain={explain}
-        />
-      }
-    />
+    <ToastProvider>
+      <WorkspaceProvider {...props}>
+        <Workspace />
+      </WorkspaceProvider>
+    </ToastProvider>
   );
 }
 
-function CentreTab({ label, count, on, onClick }: { label: string; count?: number; on: boolean; onClick: () => void }) {
+function Workspace() {
+  const ws = useWorkspace();
+  const toast = useToast();
+  const router = useRouter();
+  // The centre shows the map or the route table; explorer and inspector keep working on either.
+  const [centre, setCentre] = useState<"map" | "routes">("map");
+  const pill = useId();
+
+  const onReset = () => {
+    ws.reset();
+    setCentre("map");
+    toast({ title: "Workspace reset", description: "Filters, selection and open folders restored.", tone: "info" });
+  };
+
   return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={on}
-      onClick={onClick}
-      className={`-mb-px border-b pb-1.5 ${on ? "border-accent text-fg" : "border-transparent text-fg-muted hover:text-fg"}`}
-    >
-      {label}
-      {count !== undefined && <span className="ml-1 text-fg-muted tabular-nums">{count}</span>}
-    </button>
+    <div className="flex min-h-0 flex-1 flex-col p-3 sm:p-4">
+      <div className="panel-shadow flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line-strong bg-panel">
+        {/* Toolbar */}
+        <div className="flex flex-col gap-3 border-b border-line bg-toolbar p-3 sm:px-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="mr-1 flex min-w-0 items-center gap-2">
+              <span className="flex gap-1.5" aria-hidden>
+                <span className="size-2.5 rounded-full bg-[#ff5f57]" />
+                <span className="size-2.5 rounded-full bg-[#febc2e]" />
+                <span className="size-2.5 rounded-full bg-[#28c840]" />
+              </span>
+              <h1 className="ml-1.5 truncate font-mono text-[13px]">
+                <span className="text-subtle">{ws.repository.owner} / </span>
+                <span className="text-fg">{ws.repository.name}</span>
+              </h1>
+              <span className="hidden rounded-md border border-line px-1.5 py-0.5 font-mono text-[10.5px] text-subtle sm:inline" title={ws.commitSha}>
+                {ws.commitSha.slice(0, 7)}
+              </span>
+            </div>
+            <FileSearch className="w-full sm:w-72" />
+            <div className="flex flex-1 flex-wrap items-center gap-2 sm:justify-end">
+              <div role="tablist" aria-label="Centre view" className="grid grid-cols-2 rounded-lg border border-line bg-ink/[0.03] p-0.5">
+                {(
+                  [
+                    ["map", "Map", Network, null],
+                    ["routes", "Routes", RouteIcon, ws.routes.length],
+                  ] as const
+                ).map(([id, label, Icon, count]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={centre === id}
+                    onClick={() => setCentre(id)}
+                    className={cn("relative flex h-7 items-center gap-1.5 rounded-md px-3 text-[12px] font-medium transition", centre === id ? "text-fg" : "text-subtle hover:text-muted")}
+                  >
+                    {centre === id && (
+                      <motion.span layoutId={pill} className="absolute inset-0 rounded-md border border-line-strong bg-ink/[0.07]" transition={{ type: "spring", stiffness: 500, damping: 38 }} />
+                    )}
+                    <Icon className="relative size-3.5" aria-hidden />
+                    <span className="relative">{label}</span>
+                    {count !== null && <span className="relative font-mono text-[10px] text-subtle">{count}</span>}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center">
+                <IconButton label="Fit map to view" onClick={ws.fit} className="size-9">
+                  <Maximize2 className="size-4" />
+                </IconButton>
+                <IconButton label="Reset workspace" onClick={onReset} className="size-9">
+                  <RotateCcw className="size-4" />
+                </IconButton>
+              </div>
+              <RerunButton analysisId={ws.analysisId} label="Re-analyse" onStarted={() => router.refresh()} />
+            </div>
+          </div>
+          <CategoryFilters />
+        </div>
+
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[250px_minmax(0,1fr)_400px]">
+          <aside className="hidden min-h-0 flex-col border-r border-line bg-sidebar lg:flex">
+            <p className="flex items-center justify-between px-3 pb-1 pt-3 text-[10.5px] font-medium uppercase tracking-wider text-subtle">
+              Explorer <span className="font-mono normal-case tracking-normal">{ws.files.length} files</span>
+            </p>
+            <Explorer className="min-h-0 flex-1" />
+          </aside>
+
+          <section aria-label="Map" className="relative min-h-[420px] min-w-0 bg-bg">
+            {/* The map stays mounted under the table, so switching back keeps its viewport. */}
+            <div className={cn("absolute inset-0", centre !== "map" && "invisible")}>
+              <DependencyMap
+                files={ws.files}
+                edges={ws.shownEdges}
+                folding={ws.folding}
+                open={ws.open}
+                selection={ws.selection}
+                hover={ws.hover}
+                hidden={ws.hidden}
+                roles={ws.roles}
+                categories={ws.categories}
+                camera={ws.camera}
+                onOpen={ws.openGroup}
+                onClose={ws.closeGroup}
+                onSelectFile={ws.toggleFile}
+                onScroll={ws.scroll}
+                onHover={ws.setHover}
+                onDeselect={ws.deselect}
+              />
+            </div>
+            {centre === "routes" && (
+              <div className="absolute inset-0 bg-panel">
+                <RouteTable
+                  routes={ws.routes}
+                  coverage={ws.routeCoverage}
+                  selection={ws.selection}
+                  hover={ws.hover}
+                  onReveal={(path) => {
+                    ws.reveal(path);
+                    setCentre("map");
+                  }}
+                  onHover={ws.setHover}
+                />
+              </div>
+            )}
+          </section>
+
+          <aside aria-label="Inspector" className="flex min-h-0 flex-col border-l border-line bg-sidebar max-lg:h-[640px] max-lg:border-t">
+            <Inspector className="min-h-0 flex-1" />
+          </aside>
+        </div>
+      </div>
+    </div>
   );
 }

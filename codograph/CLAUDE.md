@@ -93,13 +93,10 @@ recorded run with no model call in it.
 
 One obvious way to do something beats a configurable one.
 
-The UI is a dense developer tool. Small type, tight spacing, monospace for file
-paths. Colour means something or isn't there. Nothing moves unless it was
-clicked.
-
-There's a frontend design skill that activates on its own for UI work. Use it,
-but the paragraph above overrules it — it will reach for motion, depth and big
-type, and this is a tool someone stares at for an hour.
+The UI matches the landing page in `../landing-page`: its palette, rounded
+panels, glows, type scale and motion. When building a screen, start from the
+landing page's version of it and reuse its components' look. Monospace for
+file paths. Colour still means something or isn't there.
 
 ## Things not to do
 
@@ -112,8 +109,9 @@ Breaking one of these is worse than not finishing.
   Route not fully recoverable? Show none. Absent beats approximate.
 - **Don't install a package without asking.** Name it, say what for, wait.
 - **Don't build ahead of the current phase.** No scaffolding for what's coming.
-- **Don't grade the code.** No scores, ratings, severity or "issues found". This
-  explains a codebase, it doesn't review one.
+- **Don't grade the code.** No ratings, severity or "issues found". This
+  explains a codebase, it doesn't review one. A count read from the syntax,
+  like complexity (branch points), is a fact and can be shown as one.
 - **Don't leave the build broken.** Tell me about a failure instead of working
   around it.
 - **Don't weaken a check to make it pass.** A check that can't run has to fail

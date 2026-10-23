@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cartograph",
+  title: "Codograph — Understand your codebase. Before you change it.",
   description: "Dependency maps of public GitHub repositories",
 };
 
@@ -27,15 +27,17 @@ const clerkAppearance = {
     colorBackground: "var(--surface)",
     colorForeground: "var(--fg)",
     colorMutedForeground: "var(--fg-muted)",
-    colorPrimary: "var(--accent)",
-    colorPrimaryForeground: "var(--accent-fg)",
+    // A fixed colour, not a variable: Clerk derives its button shades from it.
+    // White on this violet holds 5.7:1 in either theme.
+    colorPrimary: "#7c3aed",
+    colorPrimaryForeground: "#ffffff",
     colorInput: "var(--canvas)",
     colorInputForeground: "var(--fg)",
     colorNeutral: "var(--fg)",
     colorBorder: "var(--line)",
     fontFamily: "var(--font-geist-sans)",
     fontSize: "0.8125rem",
-    borderRadius: "0.25rem",
+    borderRadius: "0.75rem",
   },
 };
 

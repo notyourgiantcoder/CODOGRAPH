@@ -28,7 +28,7 @@ export function RouteTable({
   const hoveredFile = hover?.kind === "file" ? hover.path : null;
 
   return (
-    <div className="absolute inset-0 overflow-y-auto bg-surface text-[11px]">
+    <div className="scrollbar-thin absolute inset-0 overflow-y-auto bg-panel text-[12px]">
       <p className="border-b border-line px-3 py-1.5 text-fg-muted">
         Listed only where the method and the full path are both written in the code.
       </p>

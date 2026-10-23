@@ -26,7 +26,7 @@ export async function loadStoredAnalysis(
   const files = await readAll((from, to) =>
     db
       .from("files")
-      .select("id, path, module, lines, bytes, hash, fan_in, fan_out, reached_by, exports, skip_reason, skip_detail, file_roles(role, source)")
+      .select("id, path, module, lines, bytes, hash, fan_in, fan_out, reached_by, exports, complexity, skip_reason, skip_detail, file_roles(role, source)")
       .eq("analysis_id", analysis.id)
       .order("id")
       .range(from, to),
@@ -75,6 +75,7 @@ export async function loadStoredAnalysis(
         // One row at most: file_id is unique in file_roles.
         role: f.file_roles[0]?.source === "convention" ? f.file_roles[0].role : null,
         exports: f.exports,
+        complexity: f.complexity,
       }))
       .sort((a, b) => a.path.localeCompare(b.path)),
     edges: edges.map((e) => ({

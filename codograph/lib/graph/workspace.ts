@@ -118,3 +118,9 @@ export const EDGE_KIND_LABELS: Record<EdgeKind, EdgeLabel> = {
   require: { label: "require()", verb: "requires" },
   fetch: { label: "Network call", verb: "calls" },
 };
+
+/** A file, or one line of it, on GitHub at the analysed commit: the exact bytes the parser read. */
+export function githubUrl(repository: { owner: string; name: string }, commit: string, path: string, line?: number): string {
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  return `https://github.com/${repository.owner}/${repository.name}/blob/${commit}/${encoded}${line ? `#L${line}` : ""}`;
+}

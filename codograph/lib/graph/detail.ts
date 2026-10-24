@@ -1,4 +1,4 @@
-import type { Edge, EdgeKind, ParsedFile } from "../parser/types.ts";
+import type { Edge, EdgeKind, MapFile } from "../parser/types.ts";
 
 // What the detail pane lists, as arithmetic over the file and edge lists. Pure,
 // so the pane never has to ask anything for it.
@@ -42,7 +42,7 @@ function sorted(map: Map<string, Neighbour>): Neighbour[] {
   return [...map.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export type Ranked = { files: ParsedFile[]; total: number };
+export type Ranked = { files: MapFile[]; total: number };
 
 export type RepositoryRankings = {
   /** Files something imports, most importers first. */
@@ -54,7 +54,7 @@ export type RepositoryRankings = {
   unimported: Ranked;
 };
 
-export function rankRepository(files: readonly ParsedFile[]): RepositoryRankings {
+export function rankRepository(files: readonly MapFile[]): RepositoryRankings {
   const depended = files.filter((f) => f.fanIn > 0).sort((a, b) => b.fanIn - a.fanIn || a.path.localeCompare(b.path));
   const unimported = files
     .filter((f) => f.fanIn === 0)

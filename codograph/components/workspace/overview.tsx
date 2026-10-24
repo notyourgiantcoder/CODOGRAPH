@@ -7,7 +7,7 @@ import { SectionLabel } from "@/components/ui/primitives";
 import { cn } from "@/lib/cn";
 import { rankRepository, SUMMARY_LIMIT } from "@/lib/graph/detail";
 import { findInsights, INSIGHT_SENTENCES, type Cycle } from "@/lib/graph/insights";
-import type { ParsedFile } from "@/lib/parser/types";
+import type { MapFile } from "@/lib/parser/types";
 import { useWorkspace } from "./context";
 import { NeighbourIcon, PathButton, Stat } from "./inspector";
 
@@ -123,7 +123,7 @@ export function RepositoryOverview({ className }: { className?: string }) {
   );
 }
 
-function RankedList({ title, files, total, figure }: { title: string; files: ParsedFile[]; total: number; figure: (f: ParsedFile) => ReactNode }) {
+function RankedList({ title, files, total, figure }: { title: string; files: MapFile[]; total: number; figure: (f: MapFile) => ReactNode }) {
   return (
     <section>
       <SectionLabel className="flex items-baseline justify-between">
@@ -144,7 +144,7 @@ function RankedList({ title, files, total, figure }: { title: string; files: Par
   );
 }
 
-function FileRow({ file, figure }: { file: ParsedFile; figure: ReactNode }) {
+function FileRow({ file, figure }: { file: MapFile; figure: ReactNode }) {
   const { names } = useWorkspace();
   return (
     <li>

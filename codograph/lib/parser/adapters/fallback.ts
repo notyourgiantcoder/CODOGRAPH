@@ -10,5 +10,6 @@ export const fallbackAdapter: FrameworkAdapter = {
   excludeDirectory: () => null,
   reachedBy: toolConventions,
   roleOf: (file) => toolRole(file.path),
+  routeSource: () => false,
   routes: () => NO_ROUTES,
 };

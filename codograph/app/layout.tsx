@@ -16,7 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Codograph — Understand your codebase. Before you change it.",
+  // Pages name themselves; the template adds the product after.
+  title: { default: "Codograph — Understand your codebase. Before you change it.", template: "%s · Codograph" },
   description: "Dependency maps of public GitHub repositories",
 };
 

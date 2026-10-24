@@ -99,7 +99,13 @@ export function explainFileMessage(input: FileInput, source: string): string {
     .join("\n");
 }
 
+/** Past this many files a folder is summarised: listing them all would run past what a model reads. */
+export const FOLDER_LISTED_FILES = 150;
+const FOLDER_TOP_FILES = 60;
+const FOLDER_TOP_PAIRS = 40;
+
 export function explainFolderMessage(input: FolderInput): string {
+  if (input.files.length > FOLDER_LISTED_FILES) return summarisedFolderMessage(input);
   const importers = new Map<string, number>();
   for (const e of input.incoming) importers.set(e.to, (importers.get(e.to) ?? 0) + 1);
   const outside = new Set(input.incoming.map((e) => e.from));
@@ -118,6 +124,49 @@ export function explainFolderMessage(input: FolderInput): string {
     "",
     `Imports from it to outside (${input.outgoing.length}):`,
     ...(input.outgoing.length ? input.outgoing.map((e) => `- ${e.from} → ${e.to}`) : ["- none"]),
+  ].join("\n");
+}
+
+// A big folder in counts: its subfolders, its most-imported files, and the
+// imports across its edge totalled by the folder at the other end. It says
+// outright that the lists are cut short, so they're never read as complete.
+function summarisedFolderMessage(input: FolderInput): string {
+  const below = (path: string) => (input.dir === "." ? path : path.slice(input.dir.length + 1));
+  const subfolders = new Map<string, number>();
+  for (const f of input.files) {
+    const rest = below(f.path);
+    const key = rest.includes("/") ? `${rest.slice(0, rest.indexOf("/"))}/` : "(directly in it)";
+    subfolders.set(key, (subfolders.get(key) ?? 0) + 1);
+  }
+  const top = [...input.files].sort((a, b) => b.fanIn - a.fanIn || a.path.localeCompare(b.path)).slice(0, FOLDER_TOP_FILES);
+  const folderOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "(repository root)");
+  const totals = (pairs: { from: string; to: string }[], side: "from" | "to") => {
+    const counts = new Map<string, number>();
+    for (const e of pairs) counts.set(folderOf(e[side]), (counts.get(folderOf(e[side])) ?? 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  };
+  const into = totals(input.incoming, "from");
+  const outOf = totals(input.outgoing, "to");
+  const outside = new Set(input.incoming.map((e) => e.from));
+  return [
+    `Folder: ${input.dir === "." ? "(repository root)" : `${input.dir}/`}`,
+    `${input.files.length} files, ${outside.size} outside ${outside.size === 1 ? "file imports" : "files import"} into it.`,
+    `It's too big to list every file, so the lists below are cut short and say how much they leave out. Don't treat them as complete.`,
+    "",
+    "Where its files sit (subfolder: files):",
+    ...[...subfolders].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([dir, n]) => `- ${dir} ${n}`),
+    "",
+    `Its ${top.length} most-imported files of ${input.files.length} (role; exports; imported by N files anywhere; imports N files):`,
+    ...top.map(
+      (f) =>
+        `- ${f.path} (${f.role ?? "no role"}; ${f.exports.length ? f.exports.slice(0, 12).join(", ") + (f.exports.length > 12 ? `, and ${f.exports.length - 12} more` : "") : "no named exports"}; imported by ${f.fanIn}; imports ${f.fanOut})`,
+    ),
+    "",
+    `Imports into it from outside: ${input.incoming.length}, by the folder they come from (the top ${Math.min(FOLDER_TOP_PAIRS, into.length)} of ${into.length}):`,
+    ...(into.length ? into.slice(0, FOLDER_TOP_PAIRS).map(([dir, n]) => `- ${dir}: ${n}`) : ["- none"]),
+    "",
+    `Imports from it to outside: ${input.outgoing.length}, by the folder they go to (the top ${Math.min(FOLDER_TOP_PAIRS, outOf.length)} of ${outOf.length}):`,
+    ...(outOf.length ? outOf.slice(0, FOLDER_TOP_PAIRS).map(([dir, n]) => `- ${dir}: ${n}`) : ["- none"]),
   ].join("\n");
 }
 

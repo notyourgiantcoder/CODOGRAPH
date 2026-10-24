@@ -12,11 +12,13 @@ const DECLARATION = /\.d\.(ts|mts|cts)$|\.d\.[^/.]+\.ts$/;
 // A file over it is skipped and counted, never partially read.
 export const MAX_FILE_BYTES = 1024 * 1024;
 
+// No contents: holding every file's text until parsing ends is what ran a big
+// repository out of memory. The parser reads each file again when its batch
+// comes up, and checks it still hashes to what was walked.
 export type CandidateFile = {
   path: string;
   absolutePath: string;
   module: string;
-  content: string;
   bytes: number;
   lines: number;
   hash: string;
@@ -66,10 +68,13 @@ export function moduleOf(relativePath: string): string {
   return dir === "" ? "." : dir;
 }
 
-function countLines(content: string): number {
-  if (content.length === 0) return 0;
-  const breaks = content.split("\n").length;
-  return content.endsWith("\n") ? breaks - 1 : breaks;
+// Counted on the bytes: 0x0A only ever encodes a newline in UTF-8, so this is
+// the decoded text's line count without decoding or splitting it.
+function countLines(buffer: Buffer): number {
+  if (buffer.byteLength === 0) return 0;
+  let breaks = 1;
+  for (let at = buffer.indexOf(10); at !== -1; at = buffer.indexOf(10, at + 1)) breaks++;
+  return buffer[buffer.byteLength - 1] === 10 ? breaks - 1 : breaks;
 }
 
 function genericExclusion(name: string): string | null {
@@ -206,14 +211,12 @@ function readCandidate(
   if (buffer.includes(0)) {
     return { path: relativePath, reason: "binary", detail: "contains NUL bytes" };
   }
-  const content = buffer.toString("utf8");
   return {
     path: relativePath,
     absolutePath,
     module: moduleOf(relativePath),
-    content,
     bytes: buffer.byteLength,
-    lines: countLines(content),
+    lines: countLines(buffer),
     hash: createHash("sha256").update(buffer).digest("hex"),
     reachedBy,
     project,

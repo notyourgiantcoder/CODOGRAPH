@@ -437,6 +437,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      analysis_map_edges: {
+        Args: { p_analysis_id: string; p_part: number; p_parts: number }
+        Returns: Json
+      }
+      analysis_map_files: {
+        Args: { p_analysis_id: string }
+        Returns: Json
+      }
+      analysis_map_routes: {
+        Args: { p_analysis_id: string }
+        Returns: Json
+      }
       insert_edges: {
         Args: { p_analysis_id: string; p_edges: Json }
         Returns: number

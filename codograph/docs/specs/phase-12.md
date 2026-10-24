@@ -52,4 +52,4 @@ landing page.
 
 ## Not in this phase
 
-Impact analysis and paths (13), the assistant (14), the insights dashboard (15).
+Making a big repository readable (13), impact analysis and paths (14), the assistant (15), the insights dashboard (16).

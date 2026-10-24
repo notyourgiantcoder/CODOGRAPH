@@ -1,9 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ClassifyInput, FileInput, FolderFile, FolderInput, NeighbourFacts } from "../ai/prompts.ts";
-import { foldDirectories } from "../graph/fold.ts";
 import { EDGE_KINDS, type EdgeKind } from "../parser/types.ts";
 import type { Database } from "../supabase/database.types.ts";
-import { readAll } from "./load.ts";
+import { exact, readAll } from "./load.ts";
 
 type Db = SupabaseClient<Database>;
 
@@ -31,11 +30,12 @@ export async function loadFileInput(
     throw new Error(`${path} was skipped by the parser, so there's nothing parsed to explain`);
   }
 
-  const edges = await readAll((from, to) =>
+  const edges = await readAll((from, to, count) =>
     db
       .from("edges")
       .select(
         "id, kind, type_only, source_file_id, target_file_id, source:files!edges_source_file_id_organization_id_fkey(path, exports, file_roles(role, source)), target:files!edges_target_file_id_organization_id_fkey(path, exports, file_roles(role, source))",
+        exact(count),
       )
       .eq("analysis_id", analysisId)
       .or(`source_file_id.eq.${file.id},target_file_id.eq.${file.id}`)
@@ -75,13 +75,14 @@ export async function loadFileInput(
   return { file: { id: file.id, path: file.path, hash: file.hash, conventionRole: role?.source === "convention" }, input, classify };
 }
 
-// The folder is a group of the same folding the map draws, worked out from the
-// same parsed file list, so the question is about the box that was clicked.
+// The folder as it is: every parsed file at or below it. The map shows a
+// folder at different depths as you move around it, so the question is about
+// the folder itself, not whichever box it happened to be drawn as.
 export async function loadFolderInput(db: Db, analysisId: string, dir: string): Promise<FolderInput | null> {
-  const rows = await readAll((from, to) =>
+  const rows = await readAll((from, to, count) =>
     db
       .from("files")
-      .select("id, path, module, hash, exports, fan_in, fan_out, file_roles(role, source)")
+      .select("id, path, module, hash, exports, fan_in, fan_out, file_roles(role, source)", exact(count))
       .eq("analysis_id", analysisId)
       .is("skip_reason", null)
       .order("id")
@@ -93,13 +94,17 @@ export async function loadFolderInput(db: Db, analysisId: string, dir: string): 
     }
     return { ...r, module: r.module, hash: r.hash, exports: r.exports, fan_in: r.fan_in, fan_out: r.fan_out };
   });
-  const group = foldDirectories(files).groups.find((g) => g.dir === dir);
-  if (!group) return null;
+  const below = files
+    .map((f) => f.path)
+    .filter((p) => dir === "." || p.startsWith(`${dir}/`))
+    .sort();
+  if (below.length === 0) return null;
+  const group = { dir, files: below };
 
   const inside = new Set(group.files);
   const pathOf = new Map(files.map((f) => [f.id, f.path]));
-  const edges = await readAll((from, to) =>
-    db.from("edges").select("id, source_file_id, target_file_id").eq("analysis_id", analysisId).order("id").range(from, to),
+  const edges = await readAll((from, to, count) =>
+    db.from("edges").select("id, source_file_id, target_file_id", exact(count)).eq("analysis_id", analysisId).order("id").range(from, to),
   );
   const incoming = new Map<string, { from: string; to: string }>();
   const outgoing = new Map<string, { from: string; to: string }>();
@@ -114,7 +119,7 @@ export async function loadFolderInput(db: Db, analysisId: string, dir: string): 
   const byPath = new Map(files.map((f) => [f.path, f]));
   const members: FolderFile[] = group.files.map((p) => {
     const f = byPath.get(p);
-    if (!f) throw new Error(`Folded file ${p} isn't in the file list it was folded from`);
+    if (!f) throw new Error(`Folder file ${p} isn't in the file list it was read from`);
     return { path: f.path, hash: f.hash, role: conventionRole(f.file_roles), exports: f.exports, fanIn: f.fan_in, fanOut: f.fan_out };
   });
   const order = (a: { from: string; to: string }, b: { from: string; to: string }) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to);

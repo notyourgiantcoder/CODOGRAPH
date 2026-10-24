@@ -87,6 +87,7 @@ export async function classifyFile(input: ClassifyInput, deps: { cache: Cache; s
         { role: "user", content: classifyMessage(question, excerpt) },
       ],
       ...openaiOnly(provider, { reasoning_effort: "low" }),
+      ...nimOnly(provider),
       response_format: {
         type: "json_schema",
         json_schema: {
@@ -134,6 +135,7 @@ async function complete(provider: Provider, model: string, system: string, user:
       { role: "user", content: user },
     ],
     ...openaiOnly(provider, { reasoning_effort: "low", verbosity: "low" }),
+    ...nimOnly(provider),
   });
   const body = response.choices[0]?.message.content?.trim();
   if (!body) throw new Error(`${model} returned an empty answer (finish reason: ${response.choices[0]?.finish_reason ?? "none"})`);
@@ -144,6 +146,13 @@ async function complete(provider: Provider, model: string, system: string, user:
 // NIM models don't take them, so they're only sent to OpenAI.
 function openaiOnly<T extends object>(provider: Provider, params: T): T | Record<string, never> {
   return provider.name === "openai" ? params : {};
+}
+
+// The NIM model thinks before it answers unless told not to, and with a token
+// budget it can spend all of it thinking and return nothing. The answer is
+// written from facts already in the prompt, so thinking adds only time.
+function nimOnly(provider: Provider): { chat_template_kwargs: { enable_thinking: false } } | Record<string, never> {
+  return provider.name === "nvidia-nim" ? { chat_template_kwargs: { enable_thinking: false } } : {};
 }
 
 function capped(source: string): string {

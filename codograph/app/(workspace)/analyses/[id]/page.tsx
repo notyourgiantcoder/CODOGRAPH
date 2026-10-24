@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import type { ComponentProps } from "react";
@@ -5,12 +6,23 @@ import { AnalysisHeader } from "@/components/analysis-header";
 import { AnalysisView } from "@/components/analysis-view";
 import { AnalysisProgress } from "@/components/progress/analysis-progress";
 import { loadStoredAnalysis } from "@/lib/analysis/load";
+import { packMap } from "@/lib/analysis/packed";
 import { SCHEMA_VERSION } from "@/lib/parser/types";
 import { isStale } from "@/lib/pipeline/stages";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { ago } from "@/lib/time";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The tab says which repository it is. Read under the member's policies, like
+// the page: another organization's analysis has no name to give.
+export async function generateMetadata({ params }: PageProps<"/analyses/[id]">): Promise<Metadata> {
+  const { id } = await params;
+  if (!UUID.test(id)) return { title: "Analysis" };
+  const supabase = await createServerSupabase();
+  const { data } = await supabase.from("analyses").select("project:projects(repo_owner, repo_name)").eq("id", id).maybeSingle();
+  return { title: data?.project ? `${data.project.repo_owner}/${data.project.repo_name}` : "Analysis" };
+}
 
 // One address per analysis: the map once it's complete, the run's progress
 // until then. The progress view refreshes this page when the last stage
@@ -26,8 +38,7 @@ export default async function AnalysisPage({ params }: PageProps<"/analyses/[id]
     return (
       <div className="flex h-full flex-col">
         <AnalysisView
-          files={result.files}
-          edges={result.edges}
+          map={packMap(result.files, result.edges)}
           routes={result.routes}
           routeCoverage={result.coverage.routes}
           modelRoles={modelRoles}

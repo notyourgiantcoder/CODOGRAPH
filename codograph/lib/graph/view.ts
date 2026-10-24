@@ -1,4 +1,4 @@
-import type { Edge, ParsedFile } from "../parser/types.ts";
+import type { Edge, MapFile } from "../parser/types.ts";
 import type { Folding, Group } from "./fold.ts";
 import { shortestUniqueLabels } from "./labels.ts";
 
@@ -14,7 +14,16 @@ export const BELOW_HANDLE = "v";
 
 export type Row = { path: string; label: string; fanIn: number; fanOut: number };
 
-type Common = { id: string; dir: string; label: string; fileCount: number; fanIn: number; fanOut: number };
+type Common = {
+  id: string;
+  dir: string;
+  label: string;
+  fileCount: number;
+  fanIn: number;
+  fanOut: number;
+  /** Stands for a folder outside the one in view; its files are the ones linked to it. */
+  outside: boolean;
+};
 export type FoldedObject = Common & { kind: "folded" };
 export type PanelObject = Common & {
   kind: "panel";
@@ -63,7 +72,7 @@ export function groupId(dir: string): string {
 }
 
 export function buildView(
-  files: readonly ParsedFile[],
+  files: readonly MapFile[],
   edges: readonly Edge[],
   folding: Folding,
   /** Open groups, each with its scroll offset. Clamped here, so any number is safe. */
@@ -98,10 +107,11 @@ export function buildView(
     const common: Common = {
       id: groupId(g.dir),
       dir: g.dir,
-      label: g.dir === "." ? "(root)" : (groupLabels.get(g.dir) ?? g.dir),
+      label: folding.labels?.get(g.dir) ?? (g.dir === "." ? "(root)" : (groupLabels.get(g.dir) ?? g.dir)),
       fileCount: g.files.length,
       fanIn: fan.get(g.dir)?.fanIn ?? 0,
       fanOut: fan.get(g.dir)?.fanOut ?? 0,
+      outside: folding.outside?.has(g.dir) ?? false,
     };
     const w = windows.get(g.dir);
     if (!w) return { ...common, kind: "folded" };
@@ -171,7 +181,7 @@ export function buildView(
 // Rows most depended on come first, so an unscrolled panel shows the files
 // that matter most. Exported so anything scrolling a panel to a file finds it
 // at the index the panel will put it.
-export function rankGroupFiles(group: Pick<Group, "files">, byPath: ReadonlyMap<string, ParsedFile>): string[] {
+export function rankGroupFiles(group: Pick<Group, "files">, byPath: ReadonlyMap<string, MapFile>): string[] {
   return [...group.files].sort(
     (a, b) => (byPath.get(b)?.fanIn ?? 0) - (byPath.get(a)?.fanIn ?? 0) || a.localeCompare(b),
   );

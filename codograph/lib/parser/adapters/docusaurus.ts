@@ -23,5 +23,6 @@ export const docusaurusAdapter: FrameworkAdapter = {
   reachedBy: (path) => docusaurusConvention(path)?.reachedBy ?? toolConventions(path),
   roleOf: (file) => docusaurusConvention(file.path)?.role ?? toolRole(file.path) ?? reactRole(file),
   // A page answers whatever the static host serves; no method is written anywhere.
+  routeSource: () => false,
   routes: () => NO_ROUTES,
 };

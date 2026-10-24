@@ -8,7 +8,9 @@ import {
   Panel,
   ReactFlow,
   ReactFlowProvider,
+  getViewportForBounds,
   useReactFlow,
+  useStore,
   type EdgeTypes,
   type NodeTypes,
 } from "@xyflow/react";
@@ -19,11 +21,11 @@ import { IconButton } from "@/components/ui/primitives";
 import type { Folding } from "@/lib/graph/fold";
 import { highlight as highlightFor, hoverEndpoint, type Selection } from "@/lib/graph/highlight";
 import { buildView } from "@/lib/graph/view";
-import type { Edge, ParsedFile } from "@/lib/parser/types";
+import type { Edge, MapFile } from "@/lib/parser/types";
 import type { RailKey } from "@/lib/roles";
 import { usePrefersReducedMotion } from "@/lib/use-media-query";
 import { DependencyEdge, edgeColor, type EdgeState, type MapFlowEdge } from "./edge";
-import { layout, PANEL_HEADER_HEIGHT, ROW_HEIGHT } from "./layout";
+import { layout, PANEL_HEADER_HEIGHT, ROW_HEIGHT, type Box } from "./layout";
 import { MapLegend } from "./legend";
 import { FoldedNodeView, MapActions, MapSelection, PanelNodeView, type FoldedNode, type PanelNode } from "./nodes";
 
@@ -39,8 +41,10 @@ const INITIAL_MAX_ZOOM = 1.15;
  * page, the first view is close enough to read, and the minimap and a drag
  * reach the rest.
  */
-const INITIAL_MIN_ZOOM = 0.7;
+const INITIAL_MIN_ZOOM = 0.55;
 const ENTRANCE_MS = 900;
+/** Lines drawn when there are more than this many, unless every line is asked for. */
+const STRONGEST = 40;
 
 /** A request to move the camera; a new nonce asks again. */
 export type Camera =
@@ -52,7 +56,7 @@ export type Camera =
 
 /** What the map draws and what it reports back. State lives with the caller, so the inspector can drive the same selection. */
 export type MapControl = {
-  files: ParsedFile[];
+  files: MapFile[];
   /** Already filtered by the type-only toggle. */
   edges: Edge[];
   folding: Folding;
@@ -68,7 +72,12 @@ export type MapControl = {
   /** For the legend: every category with its count. */
   categories: { key: RailKey; count: number }[];
   camera: Camera;
+  /** Draw every line, not just the strongest. */
+  allLines: boolean;
+  onToggleAllLines: () => void;
+  /** A folder box was clicked: go into it. */
   onOpen: (id: string) => void;
+  /** The open panel's header was clicked. */
   onClose: (id: string) => void;
   onSelectFile: (path: string) => void;
   onScroll: (id: string, offset: number) => void;
@@ -95,6 +104,8 @@ function MapCanvas({
   roles,
   categories,
   camera,
+  allLines,
+  onToggleAllLines,
   onOpen,
   onClose,
   onSelectFile,
@@ -104,10 +115,18 @@ function MapCanvas({
 }: MapControl) {
   const reduceMotion = usePrefersReducedMotion();
   const view = useMemo(() => buildView(files, edges, folding, open, hidden), [files, edges, folding, open, hidden]);
-  const boxes = useMemo(() => layout(view.objects, view.edges), [view]);
+  const boxes = useMemo(() => layout(view.objects), [view]);
   // As on the landing page, the pointer previews a neighbourhood and the
   // selection holds one when the pointer is elsewhere.
-  const lit = useMemo(() => highlightFor(view, edges, hover ?? selection), [view, edges, hover, selection]);
+  // A folder that isn't a box here has nothing to light up, so it leaves the
+  // map as it is rather than dimming all of it.
+  const lit = useMemo(() => {
+    const target = hover ?? selection;
+    // The open panel is the folder in view itself: it's the context, and
+    // lighting every line it has would light most of the map.
+    if (target?.kind === "group" && !view.objects.some((o) => o.id === target.id && o.kind === "folded")) return null;
+    return highlightFor(view, edges, target);
+  }, [view, edges, hover, selection]);
   const hovered = useMemo(() => hoverEndpoint(view, hover), [view, hover]);
 
   const [settled, setSettled] = useState(false);
@@ -127,20 +146,35 @@ function MapCanvas({
     [view, boxes],
   );
 
+  // Many lines at once read as noise. The strongest, by how many imports
+  // each stands for, stay, and so does every line touching what's lit; the
+  // layout is still worked out from all of them, so nothing moves on toggle.
+  const drawn = useMemo(() => {
+    if (allLines || view.edges.length <= STRONGEST) return view.edges;
+    const strongest = new Set(
+      [...view.edges]
+        .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id))
+        .slice(0, STRONGEST)
+        .map((e) => e.id),
+    );
+    return view.edges.filter((e) => strongest.has(e.id) || lit?.incoming.has(e.id) || lit?.outgoing.has(e.id));
+  }, [view, allLines, lit]);
+
   const flowEdges = useMemo(() => {
     const dim: MapFlowEdge[] = [];
     const bright: MapFlowEdge[] = [];
-    for (const e of view.edges) {
+    for (const e of drawn) {
       const state: EdgeState = !lit ? "idle" : lit.incoming.has(e.id) ? "incoming" : lit.outgoing.has(e.id) ? "outgoing" : "dim";
       const data = { state, typeOnly: e.typeOnly, network: e.network, count: e.count };
       const color = edgeColor(data);
+      const sides = facingSides(boxes.get(e.source), boxes.get(e.target), e.sourceHandle !== null, e.targetHandle !== null);
       (state === "incoming" || state === "outgoing" ? bright : dim).push({
         id: e.id,
         type: "dependency",
         source: e.source,
-        sourceHandle: e.sourceHandle,
+        sourceHandle: e.sourceHandle === null ? `s-${sides.from}` : `${e.sourceHandle}|s-${sides.from}`,
         target: e.target,
-        targetHandle: e.targetHandle,
+        targetHandle: e.targetHandle === null ? `t-${sides.to}` : `${e.targetHandle}|t-${sides.to}`,
         markerEnd: { type: MarkerType.ArrowClosed, color, width: 14, height: 14 },
         data,
       });
@@ -148,23 +182,39 @@ function MapCanvas({
     // Bright edges are drawn last so they cross over the dim ones. Order,
     // not zIndex: a raised edge would also draw over the nodes.
     return [...dim, ...bright];
-  }, [view, lit]);
+  }, [drawn, lit, boxes]);
 
   const flow = useReactFlow();
 
-  // Camera requests from the toolbar, the explorer, search and the inspector.
-  const moved = useRef<number | null>(null);
+  // The camera is worked out from the layout's own boxes, which are exact,
+  // not from what React Flow has measured so far: a fit against boxes it
+  // hasn't sized yet lands somewhere arbitrary. It waits only for the canvas
+  // to have a size. A new set of boxes (another folder, a filter) fits
+  // itself; an explicit request (fit, or bring a file into view) is applied
+  // in its place, so it wins.
+  const paneWidth = useStore((state) => state.width);
+  const paneHeight = useStore((state) => state.height);
+  const handledCamera = useRef<number | null>(null);
+  const fittedLayout = useRef<string | null>(null);
+  const layoutKey = useMemo(() => view.objects.map((o) => o.id).join("|"), [view]);
   useEffect(() => {
-    if (!camera || camera.nonce === moved.current) return;
-    moved.current = camera.nonce;
+    if (paneWidth === 0 || paneHeight === 0 || boxes.size === 0) return;
     const duration = reduceMotion ? 0 : 650;
-    if (camera.kind === "fit") {
-      void flow.fitView({ padding: FIT_PADDING, duration, minZoom: INITIAL_MIN_ZOOM, maxZoom: INITIAL_MAX_ZOOM });
+    const fit = () =>
+      void flow.setViewport(getViewportForBounds(boundsOf(boxes), paneWidth, paneHeight, INITIAL_MIN_ZOOM, INITIAL_MAX_ZOOM, FIT_PADDING), {
+        duration,
+      });
+    const fresh = camera !== null && camera.nonce !== handledCamera.current;
+    if (!fresh) {
+      if (layoutKey !== fittedLayout.current) {
+        fittedLayout.current = layoutKey;
+        fit();
+      }
       return;
     }
-    // Opening a folder never zooms out: the panel comes to the middle at a
-    // zoom its rows can be read at. Runs against the layout the open produced,
-    // since the caller sets the camera in the same update as the open.
+    handledCamera.current = camera.nonce;
+    fittedLayout.current = layoutKey;
+    if (camera.kind === "fit") return fit();
     if (camera.kind === "group") {
       const box = boxes.get(camera.id);
       if (box) void flow.setCenter(box.x + box.width / 2, box.y + box.height / 2, { zoom: Math.max(flow.getZoom(), 0.85), duration });
@@ -172,7 +222,7 @@ function MapCanvas({
     }
     const at = view.endpointOf.get(camera.path);
     const box = at ? boxes.get(at.object) : undefined;
-    if (!at || !box) return;
+    if (!at || !box) return fit();
     // A row sits inside its panel: aim at the row, not the panel's middle.
     const object = view.objects.find((o) => o.id === at.object);
     let y = box.y + box.height / 2;
@@ -182,7 +232,7 @@ function MapCanvas({
       if (index >= 0) y = box.y + PANEL_HEADER_HEIGHT + (index + (object.scrolls ? 1 : 0)) * ROW_HEIGHT + ROW_HEIGHT / 2;
     }
     void flow.setCenter(box.x + box.width / 2, y, { zoom: Math.max(flow.getZoom(), 0.95), duration });
-  }, [camera, flow, view, boxes, reduceMotion]);
+  }, [paneWidth, paneHeight, camera, layoutKey, flow, view, boxes, reduceMotion]);
 
   const actions = useMemo(
     () => ({ close: onClose, selectFile: onSelectFile, scroll: onScroll, hover: onHover }),
@@ -205,8 +255,6 @@ function MapCanvas({
           edgesFocusable={false}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
-          fitView
-          fitViewOptions={{ padding: FIT_PADDING, minZoom: INITIAL_MIN_ZOOM, maxZoom: INITIAL_MAX_ZOOM }}
           proOptions={{ hideAttribution: true }}
           // Folded nodes open here. Panels handle their own header and row
           // clicks, which bubble up to this too and are ignored.
@@ -240,19 +288,76 @@ function MapCanvas({
               <IconButton label="Zoom in" onClick={() => void flow.zoomIn({ duration: 200 })}>
                 <Plus className="size-4" />
               </IconButton>
-              <IconButton label="Fit to view" onClick={() => void flow.fitView({ duration: reduceMotion ? 0 : 600, padding: FIT_PADDING })}>
+              <IconButton
+                label="Fit to view"
+                onClick={() =>
+                  void flow.setViewport(getViewportForBounds(boundsOf(boxes), paneWidth, paneHeight, MIN_ZOOM, INITIAL_MAX_ZOOM, FIT_PADDING), {
+                    duration: reduceMotion ? 0 : 600,
+                  })
+                }
+              >
                 <Maximize2 className="size-3.5" />
               </IconButton>
             </div>
           </Panel>
 
-          <Panel position="top-right" className="!m-3 hidden lg:block">
+          <Panel position="top-right" className="!m-3 hidden xl:block">
             <span className="rounded-md border border-line bg-panel/80 px-2 py-1 text-[10.5px] text-subtle backdrop-blur">
-              Click a folder to open it · drag to pan · scroll to zoom
+              Click a box to go inside · drag to pan · scroll to zoom
             </span>
           </Panel>
+
+          {view.edges.length > STRONGEST && (
+            <Panel position="bottom-center" className="!mb-3">
+              <button
+                type="button"
+                onClick={onToggleAllLines}
+                className="rounded-full border border-line-strong bg-panel/90 px-3 py-1 text-[11.5px] text-muted shadow-lg shadow-black/20 backdrop-blur transition hover:text-fg"
+              >
+                {allLines ? (
+                  <>
+                    All {view.edges.length} connections · <span className="text-violet-soft">show the strongest</span>
+                  </>
+                ) : (
+                  <>
+                    The {STRONGEST} strongest of {view.edges.length} connections · <span className="text-violet-soft">show all</span>
+                  </>
+                )}
+              </button>
+            </Panel>
+          )}
         </ReactFlow>
       </MapSelection.Provider>
     </MapActions.Provider>
   );
+}
+
+function boundsOf(boxes: ReadonlyMap<string, Box>): Box {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const b of boxes.values()) {
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+type Side = "top" | "bottom" | "left" | "right";
+
+/**
+ * Which sides a line leaves and enters by: the ones facing each other, so a
+ * box beside another is joined straight across and one below by a drop.
+ * A row only has its left and right sides.
+ */
+export function facingSides(from: Box | undefined, to: Box | undefined, fromRow: boolean, toRow: boolean): { from: Side; to: Side } {
+  if (!from || !to) return { from: "right", to: "left" };
+  const dx = to.x + to.width / 2 - (from.x + from.width / 2);
+  const dy = to.y + to.height / 2 - (from.y + from.height / 2);
+  const across = fromRow || toRow || Math.abs(dx) > Math.abs(dy);
+  if (across) return dx >= 0 ? { from: "right", to: "left" } : { from: "left", to: "right" };
+  return dy >= 0 ? { from: "bottom", to: "top" } : { from: "top", to: "bottom" };
 }

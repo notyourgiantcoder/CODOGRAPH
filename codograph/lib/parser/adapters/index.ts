@@ -23,4 +23,11 @@ export function selectAdapter(project: ProjectInfo): FrameworkAdapter {
   return ADAPTERS.find((adapter) => adapter.detect(project)) ?? fallbackAdapter;
 }
 
+// A worker thread is told a project's adapter by name, since functions can't cross threads.
+export function adapterNamed(name: string): FrameworkAdapter {
+  const adapter = ADAPTERS.find((a) => a.name === name);
+  if (!adapter) throw new Error(`No adapter named ${name}`);
+  return adapter;
+}
+
 export type { FrameworkAdapter, ProjectInfo };

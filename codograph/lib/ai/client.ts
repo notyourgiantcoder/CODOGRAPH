@@ -16,9 +16,12 @@ const OPENAI_MODELS = {
 // NVIDIA's free hosted NIM endpoint, used only when there's no OpenAI key.
 // NIM ids name one fixed checkpoint, so they're as stable as a snapshot.
 const NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
+// meta/llama-3.3-70b-instruct was retired on 2026-08-26. Of the models a free
+// account can actually call, this one answers in well under a second with its
+// thinking switched off (see tasks.ts), and keeps to a JSON schema.
 const NIM_MODELS = {
-  explain: "meta/llama-3.3-70b-instruct",
-  classify: "meta/llama-3.3-70b-instruct",
+  explain: "nvidia/nemotron-3.5-lightning-30b-a3b",
+  classify: "nvidia/nemotron-3.5-lightning-30b-a3b",
 } as const;
 
 export type Provider = {

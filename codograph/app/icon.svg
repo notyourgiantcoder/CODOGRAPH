@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1f2230"/>
+      <stop offset="1" stop-color="#121419"/>
+    </linearGradient>
+    <linearGradient id="cg-logo" x1="3" y1="3" x2="21" y2="21" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#67d5ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="9.5" fill="url(#tile)" stroke="#ffffff" stroke-opacity="0.15"/>
+  <g transform="translate(7 7) scale(0.75)">
+    <path d="M6.5 7.5 L12 16.5 L17.5 7.5" stroke="url(#cg-logo)" stroke-width="1.8" stroke-linecap="round"/>
+    <path d="M6.5 7.5 H17.5" stroke="url(#cg-logo)" stroke-width="1.8" stroke-linecap="round" opacity="0.45"/>
+    <circle cx="6.5" cy="7.5" r="2.4" fill="#a78bfa"/>
+    <circle cx="17.5" cy="7.5" r="2.4" fill="#8bb8fb"/>
+    <circle cx="12" cy="16.5" r="2.4" fill="#67d5ff"/>
+  </g>
+</svg>

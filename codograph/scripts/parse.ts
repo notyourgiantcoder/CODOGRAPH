@@ -15,7 +15,7 @@ import { railCategories, railLabel } from "../lib/roles.ts";
 
 const EXAMPLES_PER_REASON = 5;
 
-function main(argv: string[]): void {
+async function main(argv: string[]): Promise<void> {
   const all = argv.includes("--all");
   const out = valueOf(argv, "--out");
   const read = valueOf(argv, "--read");
@@ -37,7 +37,7 @@ function main(argv: string[]): void {
   }
 
   const started = performance.now();
-  const result = parseRepository(directory);
+  const result = await parseRepository(directory);
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   printSummary(result, all);
   console.log(`\nParsed in ${seconds}s.`);
@@ -161,4 +161,4 @@ function valueOf(argv: string[], flag: string): string | undefined {
   return i === -1 ? undefined : argv[i + 1];
 }
 
-main(process.argv.slice(2));
+await main(process.argv.slice(2));

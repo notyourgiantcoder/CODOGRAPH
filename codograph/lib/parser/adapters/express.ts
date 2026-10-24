@@ -41,6 +41,8 @@ export const expressAdapter: FrameworkAdapter = {
   // A pattern is assembled at runtime from the paths each router is mounted
   // on, which can be variables, arrays or regular expressions, through any
   // depth of app.use(). Reading one exactly would mean running the app.
+  // Nothing is read for routes: they're withheld whatever the files say.
+  routeSource: () => false,
   routes: () => ({
     routes: [],
     omitted: [],

@@ -1,4 +1,6 @@
-import { Fragment, type ReactNode } from "react";
+"use client";
+
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 // The landing page's highlighter: a few token classes by regex, no grammar.
@@ -33,10 +35,29 @@ function highlight(line: string): ReactNode[] {
   return out;
 }
 
-export function CodeBlock({ code, highlightLines, className }: { code: string; highlightLines: ReadonlySet<number>; className?: string }) {
+export function CodeBlock({
+  code,
+  highlightLines,
+  className,
+  scrollToFirst = false,
+}: {
+  code: string;
+  highlightLines: ReadonlySet<number>;
+  className?: string;
+  /** Open scrolled to the first highlighted line rather than the top. */
+  scrollToFirst?: boolean;
+}) {
   const lines = code.split("\n");
+  const box = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (!scrollToFirst || highlightLines.size === 0 || !box.current) return;
+    const first = Math.min(...highlightLines);
+    const row = box.current.querySelector<HTMLElement>(`[data-line="${first}"]`);
+    // Inside the block only, a few lines above the first import, so the page itself doesn't jump.
+    if (row) box.current.scrollTop = Math.max(0, row.offsetTop - 3 * row.offsetHeight);
+  }, [scrollToFirst, highlightLines, code]);
   return (
-    <pre className={cn("scrollbar-thin overflow-auto rounded-lg border border-line bg-code py-3 font-mono text-[11.5px] leading-[1.7]", className)}>
+    <pre ref={box} className={cn("scrollbar-thin relative overflow-auto rounded-lg border border-line bg-code py-3 font-mono text-[11.5px] leading-[1.7]", className)}>
       <code className="grid min-w-max">
         {lines.map((line, i) => {
           const n = i + 1;

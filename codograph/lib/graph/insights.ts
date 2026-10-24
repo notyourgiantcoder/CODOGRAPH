@@ -1,4 +1,4 @@
-import type { Edge, ParsedFile } from "../parser/types.ts";
+import type { Edge, MapFile } from "../parser/types.ts";
 
 // Four facts about the file and edge lists. Pure, and nothing here is worded
 // by a model: each kind says one fixed sentence, and the files under it are
@@ -22,13 +22,13 @@ export type Cycle = {
 };
 
 export type Insights = {
-  unimported: ParsedFile[];
-  heavilyImported: { files: ParsedFile[]; threshold: number };
+  unimported: MapFile[];
+  heavilyImported: { files: MapFile[]; threshold: number };
   cycles: Cycle[];
-  long: ParsedFile[];
+  long: MapFile[];
 };
 
-export function findInsights(files: readonly ParsedFile[], edges: readonly Edge[]): Insights {
+export function findInsights(files: readonly MapFile[], edges: readonly Edge[]): Insights {
   // A file the framework, a tool or the test runner reaches isn't unused just
   // because no import leads to it: that would be the parser reporting the
   // edge of its own view as a finding about the code.
@@ -60,7 +60,7 @@ function farOutFence(values: number[]): number {
  * Type-only imports are left out: they're erased before the code runs, so a
  * loop made of them never happens.
  */
-export function findCycles(files: readonly ParsedFile[], edges: readonly Edge[]): Cycle[] {
+export function findCycles(files: readonly MapFile[], edges: readonly Edge[]): Cycle[] {
   const next = new Map<string, string[]>();
   for (const f of files) next.set(f.path, []);
   for (const e of edges) if (!e.typeOnly) next.get(e.source)?.push(e.target);
@@ -165,6 +165,6 @@ function shortestLoop(next: ReadonlyMap<string, readonly string[]>, start: strin
   return null;
 }
 
-function byPath(a: ParsedFile, b: ParsedFile): number {
+function byPath(a: MapFile, b: MapFile): number {
   return a.path.localeCompare(b.path);
 }

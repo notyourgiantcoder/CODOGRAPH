@@ -10,14 +10,17 @@ import {
 } from "@/app/(workspace)/analyses/[id]/actions";
 import { targetKey, type ExplainTarget, type ExplanationState, type Freshness } from "@/components/explanation-panel";
 import type { Camera } from "@/components/map/dependency-map";
-import { foldDirectories, type Folding } from "@/lib/graph/fold";
 import type { Selection } from "@/lib/graph/highlight";
-import { clampOffset, groupId, MAX_ROWS, rankGroupFiles } from "@/lib/graph/view";
+import { FULL_MAP_FILES, landing, scopeFolding, type Scoped } from "@/lib/graph/scope";
+import { groupId, MAX_ROWS, rankGroupFiles } from "@/lib/graph/view";
 import { displayNames } from "@/lib/graph/workspace";
-import type { Coverage, Edge, ParsedFile, Project, Route } from "@/lib/parser/types";
+import type { Coverage, Edge, MapFile, Project, Route } from "@/lib/parser/types";
 import { railCategories, UNCLASSIFIED, type ModelRole, type RailKey } from "@/lib/roles";
 
 export type InspectorTab = "overview" | "dependencies" | "dependents" | "code";
+
+/** What the middle of the workspace shows: the map, one file's neighbourhood, or the route table. */
+export type Centre = "map" | "focus" | "routes";
 
 /** What the summary says about the repository that isn't in the file and edge lists. */
 export type RepositoryFacts = {
@@ -34,13 +37,12 @@ type Data = {
   analysisId: string;
   commitSha: string;
   repository: RepositoryFacts;
-  files: ParsedFile[];
-  byPath: ReadonlyMap<string, ParsedFile>;
+  files: MapFile[];
+  byPath: ReadonlyMap<string, MapFile>;
   /** Every edge, whatever the type-only toggle says. */
   edges: Edge[];
   routes: Route[];
   routeCoverage: Coverage["routes"];
-  folding: Folding;
   /** Each file's rail category: convention's role, else the model's, else unclassified. */
   roles: ReadonlyMap<string, RailKey>;
   /** The rail's categories for this repository, each with its count. */
@@ -50,9 +52,23 @@ type Data = {
 };
 
 type State = {
+  /** The folder the map shows. "." for the repository root. */
+  scope: string;
+  /** Every file not filtered off. */
+  visibleFiles: MapFile[];
+  /** Few enough files to draw every one; otherwise the map shows one folder at a time. */
+  whole: boolean;
+  /** The folder in view as groups: its subfolders, its own files, and the outside folders imports cross into. */
+  folding: Scoped;
+  /** Edges the map draws: shown edges with both ends on the map. */
+  mapEdges: Edge[];
+  /** The folder's own panel and how far it's scrolled; nothing else opens in place. */
+  open: ReadonlyMap<string, number>;
+  /** Draw every line rather than the strongest. */
+  allLines: boolean;
+  centre: Centre;
   selection: Selection;
   hover: Selection;
-  open: ReadonlyMap<string, number>;
   camera: Camera;
   /** Categories switched off in the filter bar. */
   hiddenCategories: ReadonlySet<RailKey>;
@@ -67,11 +83,11 @@ type State = {
 };
 
 type Actions = {
-  /** Select a file and bring it into view: its folder opens, its row scrolls into the window, the camera moves to it. */
+  /** Select a file and bring it into view: the map goes to its folder, its row scrolls into the window, the camera moves to it. */
   reveal: (path: string) => void;
   toggleFile: (path: string) => void;
-  openGroup: (id: string) => void;
-  closeGroup: (id: string) => void;
+  /** Show this folder on the map, passing through any level with nothing but one subfolder. */
+  goTo: (dir: string) => void;
   selectGroup: (dir: string) => void;
   scroll: (id: string, offset: number) => void;
   setHover: (hover: Selection) => void;
@@ -79,6 +95,8 @@ type Actions = {
   toggleCategory: (key: RailKey) => void;
   showAllCategories: () => void;
   toggleTypeEdges: () => void;
+  toggleAllLines: () => void;
+  setCentre: (centre: Centre) => void;
   setTab: (tab: InspectorTab) => void;
   fit: () => void;
   reset: () => void;
@@ -104,7 +122,7 @@ export function WorkspaceProvider(props: {
   analysisId: string;
   commitSha: string;
   repository: RepositoryFacts;
-  files: ParsedFile[];
+  files: MapFile[];
   edges: Edge[];
   routes: Route[];
   routeCoverage: Coverage["routes"];
@@ -113,7 +131,6 @@ export function WorkspaceProvider(props: {
   children: ReactNode;
 }) {
   const { files, edges, analysisId } = props;
-  const folding = useMemo(() => foldDirectories(files), [files]);
   const byPath = useMemo(() => new Map(files.map((f) => [f.path, f])), [files]);
   const names = useMemo(() => displayNames(files.map((f) => f.path)), [files]);
   const [modelRoles, setModelRoles] = useState<ReadonlyMap<string, ModelRole>>(() => new Map(Object.entries(props.modelRoles)));
@@ -126,11 +143,22 @@ export function WorkspaceProvider(props: {
     [props.repository.projects, files, modelRoles],
   );
 
+  // Tests start hidden: in a large repository they can be close to half the
+  // files, and they're rarely where reading starts. The Tests chip shows them.
+  const defaultHidden = useMemo<ReadonlySet<RailKey>>(() => new Set(files.some((f) => f.role === "test") ? ["test"] : []), [files]);
+  const [hiddenCategories, setHiddenCategories] = useState<ReadonlySet<RailKey>>(defaultHidden);
+  const [scope, setScope] = useState(() =>
+    landing(
+      files.filter((f) => !defaultHidden.has(f.role ?? UNCLASSIFIED)),
+      ".",
+    ),
+  );
+  const [offsets, setOffsets] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const [allLines, setAllLines] = useState(false);
+  const [centre, setCentre] = useState<Centre>("map");
   const [selection, setSelection] = useState<Selection>(null);
   const [hover, setHover] = useState<Selection>(null);
-  const [open, setOpen] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [camera, setCamera] = useState<Camera>(null);
-  const [hiddenCategories, setHiddenCategories] = useState<ReadonlySet<RailKey>>(() => new Set());
   const [showTypeEdges, setShowTypeEdges] = useState(true);
   const [tab, setTab] = useState<InspectorTab>("overview");
   // Explanations fetched on this page, by file or folder, so moving the
@@ -145,7 +173,20 @@ export function WorkspaceProvider(props: {
     if (hiddenCategories.size === 0) return new Set<string>();
     return new Set(files.filter((f) => hiddenCategories.has(roles.get(f.path) ?? UNCLASSIFIED)).map((f) => f.path));
   }, [files, roles, hiddenCategories]);
+  const visibleFiles = useMemo(() => files.filter((f) => !hidden.has(f.path)), [files, hidden]);
+  const whole = visibleFiles.length <= FULL_MAP_FILES;
   const shownEdges = useMemo(() => (showTypeEdges ? edges : edges.filter((e) => !e.typeOnly)), [edges, showTypeEdges]);
+  const folding = useMemo(() => scopeFolding(visibleFiles, shownEdges, scope), [visibleFiles, shownEdges, scope]);
+  const mapEdges = useMemo(
+    () => shownEdges.filter((e) => folding.groupOf.has(e.source) && folding.groupOf.has(e.target)),
+    [shownEdges, folding],
+  );
+  // Only the folder's own files open in place, as rows; every other box is a
+  // way further in or out.
+  const open = useMemo(() => {
+    const id = groupId(scope);
+    return folding.groups.some((g) => g.dir === scope) ? new Map([[id, offsets.get(id) ?? 0]]) : new Map<string, number>();
+  }, [folding, scope, offsets]);
 
   const explain = useCallback(
     (target: ExplainTarget) => {
@@ -181,32 +222,18 @@ export function WorkspaceProvider(props: {
     [analysisId],
   );
 
-  // Clicking a folded node is the one click it has, so opening it also selects
-  // the panel it becomes.
-  const openGroup = useCallback((id: string) => {
-    setOpen((prev) => new Map(prev).set(id, 0));
-    setSelection({ kind: "group", id });
-    setCamera({ kind: "group", id, nonce: ++cameraNonce });
-  }, []);
-
-  const closeGroup = useCallback(
-    (id: string) => {
-      setOpen((prev) => {
-        const next = new Map(prev);
-        next.delete(id);
-        return next;
-      });
-      // A selection inside a folded-away panel has nothing left to point at.
-      setSelection((prev) => {
-        if (prev?.kind === "group") return prev.id === id ? null : prev;
-        if (prev?.kind === "file") {
-          const dir = folding.groupOf.get(prev.path);
-          return dir !== undefined && groupId(dir) === id ? null : prev;
-        }
-        return prev;
-      });
+  const goTo = useCallback(
+    (dir: string) => {
+      const target = landing(visibleFiles, dir);
+      setScope(target);
+      setOffsets(new Map());
+      setCentre("map");
+      // The inspector shows the folder that was just entered.
+      setSelection({ kind: "group", id: groupId(target) });
+      setHover(null);
+      setCamera({ kind: "fit", nonce: ++cameraNonce });
     },
-    [folding],
+    [visibleFiles],
   );
 
   const toggleFile = useCallback((path: string) => {
@@ -215,39 +242,36 @@ export function WorkspaceProvider(props: {
 
   const selectGroup = useCallback((dir: string) => {
     setSelection({ kind: "group", id: groupId(dir) });
-    setCamera(null);
   }, []);
 
   const scroll = useCallback((id: string, offset: number) => {
-    setOpen((prev) => (prev.has(id) ? new Map(prev).set(id, Math.max(0, offset)) : prev));
+    setOffsets((prev) => new Map(prev).set(id, Math.max(0, offset)));
   }, []);
 
   const reveal = useCallback(
     (path: string) => {
+      const file = byPath.get(path);
+      if (!file) return;
       const role = roles.get(path) ?? UNCLASSIFIED;
       // A file picked while its category is filtered off brings the category back.
       const nowHidden = hiddenCategories.has(role) ? new Set([...hiddenCategories].filter((c) => c !== role)) : hiddenCategories;
       if (nowHidden !== hiddenCategories) setHiddenCategories(nowHidden);
-      const isHidden = (p: string) => nowHidden.has(roles.get(p) ?? UNCLASSIFIED);
+      const visible = files.filter((f) => !nowHidden.has(roles.get(f.path) ?? UNCLASSIFIED));
 
-      const dir = folding.groupOf.get(path);
-      const group = folding.groups.find((g) => g.dir === dir);
-      if (dir === undefined || !group) return;
-      const id = groupId(dir);
-      const ranked = rankGroupFiles({ files: group.files.filter((f) => !isHidden(f)) }, byPath);
-      const index = ranked.indexOf(path);
-      const current = open.get(id);
-      const first = current === undefined ? null : clampOffset(current, ranked.length);
-      if (first === null || index < first || index >= first + MAX_ROWS) {
-        setOpen(new Map(open).set(id, index - Math.floor(MAX_ROWS / 2)));
-      }
+      // The map goes to the file's own folder, where it's one of the rows.
+      const target = file.module;
+      const scoped = scopeFolding(visible, shownEdges, target);
+      const group = scoped.groups.find((g) => g.dir === scoped.groupOf.get(path));
+      const index = group ? rankGroupFiles(group, byPath).indexOf(path) : 0;
+      setScope(target);
+      setOffsets(new Map([[groupId(target), Math.max(0, index - Math.floor(MAX_ROWS / 2))]]));
       setSelection({ kind: "file", path });
       setCamera({ kind: "focus", path, nonce: ++cameraNonce });
       // The row under the pointer is about to be replaced, and a removed
       // element never reports the pointer leaving it.
       setHover(null);
     },
-    [folding, byPath, open, roles, hiddenCategories],
+    [files, byPath, roles, hiddenCategories, shownEdges],
   );
 
   const deselect = useCallback(() => setSelection(null), []);
@@ -262,16 +286,20 @@ export function WorkspaceProvider(props: {
   }, []);
   const showAllCategories = useCallback(() => setHiddenCategories(new Set()), []);
   const toggleTypeEdges = useCallback(() => setShowTypeEdges((v) => !v), []);
+  const toggleAllLines = useCallback(() => setAllLines((v) => !v), []);
   const fit = useCallback(() => setCamera({ kind: "fit", nonce: ++cameraNonce }), []);
   const reset = useCallback(() => {
     setSelection(null);
     setHover(null);
-    setOpen(new Map());
-    setHiddenCategories(new Set());
+    setHiddenCategories(defaultHidden);
+    setScope(landing(files.filter((f) => !defaultHidden.has(f.role ?? UNCLASSIFIED)), "."));
+    setOffsets(new Map());
     setShowTypeEdges(true);
+    setAllLines(false);
+    setCentre("map");
     setTab("overview");
     setCamera({ kind: "fit", nonce: ++cameraNonce });
-  }, []);
+  }, [defaultHidden, files]);
 
   const value = useMemo<Workspace>(
     () => ({
@@ -283,14 +311,20 @@ export function WorkspaceProvider(props: {
       edges,
       routes: props.routes,
       routeCoverage: props.routeCoverage,
-      folding,
       roles,
       categories,
       names,
       modelRoles,
+      scope,
+      visibleFiles,
+      whole,
+      folding,
+      mapEdges,
+      open,
+      allLines,
+      centre,
       selection,
       hover,
-      open,
       camera,
       hiddenCategories,
       hidden,
@@ -301,8 +335,7 @@ export function WorkspaceProvider(props: {
       freshness,
       reveal,
       toggleFile,
-      openGroup,
-      closeGroup,
+      goTo,
       selectGroup,
       scroll,
       setHover,
@@ -310,6 +343,8 @@ export function WorkspaceProvider(props: {
       toggleCategory,
       showAllCategories,
       toggleTypeEdges,
+      toggleAllLines,
+      setCentre,
       setTab,
       fit,
       reset,
@@ -324,14 +359,20 @@ export function WorkspaceProvider(props: {
       edges,
       props.routes,
       props.routeCoverage,
-      folding,
       roles,
       categories,
       names,
       modelRoles,
+      scope,
+      visibleFiles,
+      whole,
+      folding,
+      mapEdges,
+      open,
+      allLines,
+      centre,
       selection,
       hover,
-      open,
       camera,
       hiddenCategories,
       hidden,
@@ -342,14 +383,14 @@ export function WorkspaceProvider(props: {
       freshness,
       reveal,
       toggleFile,
-      openGroup,
-      closeGroup,
+      goTo,
       selectGroup,
       scroll,
       deselect,
       toggleCategory,
       showAllCategories,
       toggleTypeEdges,
+      toggleAllLines,
       fit,
       reset,
       explain,

@@ -16,7 +16,8 @@ const EDGE_SAMPLES = [
 ];
 
 export function MapLegend({ categories, className }: { categories: { key: RailKey; count: number }[]; className?: string }) {
-  const [open, setOpen] = useState(true);
+  // Closed at first: open, it covers a corner of the map's boxes.
+  const [open, setOpen] = useState(false);
   const shown = categories.filter((c) => c.count > 0);
   return (
     <div className={cn("w-[248px] overflow-hidden rounded-xl border border-line-strong bg-panel/90 text-[11px] shadow-xl shadow-black/30 backdrop-blur", className)}>

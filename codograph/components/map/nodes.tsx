@@ -1,7 +1,7 @@
 "use client";
 
 import { Handle, Position, useUpdateNodeInternals, type Node, type NodeProps } from "@xyflow/react";
-import { ChevronsLeftRight, Folder, FolderOpen } from "lucide-react";
+import { CornerUpRight, Folder, FolderOpen } from "lucide-react";
 import { createContext, memo, useContext, useEffect, useRef, type WheelEvent } from "react";
 import { cn } from "@/lib/cn";
 import { endpointKey, type Highlight, type Selection } from "@/lib/graph/highlight";
@@ -63,6 +63,39 @@ function visualOf(key: string, highlight: Highlight | null, hovered: boolean, se
 // Handles are invisible anchors: an edge ends at the box or row, not at a dot.
 const anchor = "!size-px !min-h-0 !min-w-0 !border-0 !bg-transparent";
 
+const SIDES = [
+  ["top", Position.Top],
+  ["bottom", Position.Bottom],
+  ["left", Position.Left],
+  ["right", Position.Right],
+] as const;
+
+/** A box can be reached from any side; the map picks the side facing the other end (see sideHandles). */
+function SideHandles() {
+  return (
+    <>
+      {SIDES.map(([side, position]) => (
+        <Handle key={`s-${side}`} id={`s-${side}`} type="source" position={position} className={anchor} isConnectable={false} />
+      ))}
+      {SIDES.map(([side, position]) => (
+        <Handle key={`t-${side}`} id={`t-${side}`} type="target" position={position} className={anchor} isConnectable={false} />
+      ))}
+    </>
+  );
+}
+
+/** A row can be reached from either side, for the same reason. */
+function RowHandles({ id }: { id: string }) {
+  return (
+    <>
+      <Handle id={`${id}|s-left`} type="source" position={Position.Left} className={anchor} isConnectable={false} />
+      <Handle id={`${id}|s-right`} type="source" position={Position.Right} className={anchor} isConnectable={false} />
+      <Handle id={`${id}|t-left`} type="target" position={Position.Left} className={anchor} isConnectable={false} />
+      <Handle id={`${id}|t-right`} type="target" position={Position.Right} className={anchor} isConnectable={false} />
+    </>
+  );
+}
+
 // Everything inside a node is sized in px, never rem: the layout boxes are px,
 // so rem spacing in here would overflow the box it was laid out for.
 
@@ -71,27 +104,31 @@ function FoldedNodeComponent({ id, data }: NodeProps<FoldedNode>) {
   const { selection, highlight, hovered, settled } = useContext(MapSelection);
   const key = endpointKey(id, null);
   const visual = visualOf(key, highlight, hovered === key, selection?.kind === "group" && selection.id === id);
+  // An outside box is somewhere else in the repository: dashed, and counted
+  // by how many of its files the folder in view is linked to.
+  const outside = data.outside;
   return (
     <div className={cn("size-full", !settled && "animate-node-in")}>
       <div
-        title={`${data.dir} — click to open`}
+        title={`${data.dir === "." ? "the repository root" : data.dir} — click to ${outside ? "go there" : "go inside"}`}
         onMouseEnter={() => hover({ kind: "group", id })}
         onMouseLeave={() => hover(null)}
         className={cn(
           "relative flex size-full cursor-pointer items-center gap-2.5 rounded-[10px] border transition-[opacity,border-color,box-shadow,background-color] duration-300",
           SHELL[visual],
+          outside && "border-dashed",
+          outside && visual === "default" && "bg-transparent",
         )}
         style={{ paddingInline: PAD_X }}
       >
-        <Handle type="target" position={Position.Left} className={anchor} isConnectable={false} />
+        <SideHandles />
         <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-ink/[0.05] text-muted shadow-[inset_0_0_0_1px_var(--line-strong)]">
-          <Folder className="size-3.5" aria-hidden />
+          {outside ? <CornerUpRight className="size-3.5" aria-hidden /> : <Folder className="size-3.5" aria-hidden />}
         </span>
         <div className="min-w-0 flex-1 leading-tight">
-          <div className="truncate text-[12.5px] font-medium text-fg">{data.label}</div>
-          <Meta fileCount={data.fileCount} fanIn={data.fanIn} fanOut={data.fanOut} />
+          <div className={cn("truncate text-[12.5px] font-medium", outside ? "text-muted" : "text-fg")}>{data.label}</div>
+          <Meta fileCount={data.fileCount} fanIn={data.fanIn} fanOut={data.fanOut} linked={outside} />
         </div>
-        <Handle type="source" position={Position.Right} className={anchor} isConnectable={false} />
       </div>
     </div>
   );
@@ -144,7 +181,7 @@ function PanelNodeComponent({ id, data }: NodeProps<PanelNode>) {
         onClick={() => close(id)}
         onMouseEnter={() => hover({ kind: "group", id })}
         onMouseLeave={() => hover(null)}
-        title={`${data.dir} — click to fold`}
+        title={`${data.dir === "." ? "the repository root" : data.dir} — click to inspect the folder`}
         className="group/header flex shrink-0 items-center gap-2.5 border-b border-line bg-panel-2 text-left transition hover:bg-panel-3"
         style={{ height: PANEL_HEADER_HEIGHT, paddingInline: PAD_X }}
       >
@@ -155,7 +192,6 @@ function PanelNodeComponent({ id, data }: NodeProps<PanelNode>) {
           <div className="truncate text-[12.5px] font-semibold text-fg">{data.label}</div>
           <Meta fileCount={data.fileCount} fanIn={data.fanIn} fanOut={data.fanOut} />
         </div>
-        <ChevronsLeftRight className="size-3.5 shrink-0 text-subtle opacity-0 transition group-hover/header:opacity-100" aria-label="Fold" />
       </button>
       {/* nowheel: the wheel scrolls the rows here instead of zooming the map. */}
       <ul className={data.scrolls ? "nowheel" : undefined} onWheel={onWheel}>
@@ -173,7 +209,7 @@ function PanelNodeComponent({ id, data }: NodeProps<PanelNode>) {
           const visual = rowVisual(row.path, rowSelected);
           return (
             <li key={row.path} className="relative" style={{ height: ROW_HEIGHT }}>
-              <Handle id={row.path} type="target" position={Position.Left} className={anchor} isConnectable={false} />
+              <RowHandles id={row.path} />
               <button
                 type="button"
                 onClick={() => selectFile(row.path)}
@@ -199,7 +235,6 @@ function PanelNodeComponent({ id, data }: NodeProps<PanelNode>) {
                 <span className="min-w-0 flex-1 truncate font-mono">{row.label}</span>
                 <Fan fanIn={row.fanIn} fanOut={row.fanOut} />
               </button>
-              <Handle id={row.path} type="source" position={Position.Right} className={anchor} isConnectable={false} />
             </li>
           );
         })}
@@ -225,7 +260,7 @@ export const PanelNodeView = memo(PanelNodeComponent);
 function OffscreenRow(props: { handle: string; count: number; label: string; visual: Visual; onClick: () => void }) {
   return (
     <li className="relative" style={{ height: ROW_HEIGHT }}>
-      <Handle id={props.handle} type="target" position={Position.Left} className={anchor} isConnectable={false} />
+      <RowHandles id={props.handle} />
       <button
         type="button"
         onClick={props.onClick}
@@ -240,17 +275,14 @@ function OffscreenRow(props: { handle: string; count: number; label: string; vis
       >
         {props.count} {props.count === 1 ? "file" : "files"} {props.label}
       </button>
-      <Handle id={props.handle} type="source" position={Position.Right} className={anchor} isConnectable={false} />
     </li>
   );
 }
 
-function Meta({ fileCount, fanIn, fanOut }: { fileCount: number; fanIn: number; fanOut: number }) {
+function Meta({ fileCount, fanIn, fanOut, linked = false }: { fileCount: number; fanIn: number; fanOut: number; linked?: boolean }) {
   return (
     <span className="flex items-center gap-2 font-mono text-[10px] text-subtle tabular-nums">
-      <span>
-        {fileCount} {fileCount === 1 ? "file" : "files"}
-      </span>
+      <span>{`${fileCount.toLocaleString("en")} ${linked ? "linked " : ""}${fileCount === 1 ? "file" : "files"}`}</span>
       <Fan fanIn={fanIn} fanOut={fanOut} />
     </span>
   );

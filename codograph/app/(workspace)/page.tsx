@@ -7,6 +7,8 @@ import { isStale, type Status } from "@/lib/pipeline/stages";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { ago } from "@/lib/time";
 
+export const metadata = { title: "Analyses" };
+
 const LIST_LIMIT = 100;
 type Tally = Status | "stale";
 const TALLY_ORDER: Tally[] = ["running", "queued", "stale", "complete", "failed"];

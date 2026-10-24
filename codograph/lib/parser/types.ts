@@ -3,7 +3,7 @@
 
 import type { Role } from "../roles.ts";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** The ways one file loads another's code. */
 export type ImportKind = "import" | "re-export" | "dynamic-import" | "require";
@@ -45,6 +45,12 @@ export type ParsedFile = {
   /** One plus every branch point written in the file. A count of syntax, not a grade. */
   complexity: number;
 };
+
+/**
+ * What the map needs of a file in the browser. The hash and byte count only
+ * matter to the server (checking GitHub's copy, coverage), so they aren't sent.
+ */
+export type MapFile = Omit<ParsedFile, "hash" | "bytes">;
 
 /** The repository root, and every folder below it whose package.json a framework adapter detected. */
 export type Project = {

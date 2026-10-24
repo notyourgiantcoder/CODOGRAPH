@@ -20,6 +20,7 @@ export type ProjectInfo = {
 export type AdapterFile = { path: string; source: SourceFile };
 
 export type ProjectFiles = {
+  /** The project's parsed files that routeSource() kept. */
   files: readonly AdapterFile[];
   /** Code files in the project that were skipped, so their syntax is unknown. */
   unparsed: readonly string[];
@@ -63,6 +64,15 @@ export interface FrameworkAdapter {
    * unclassified rather than getting the nearest fit.
    */
   roleOf(file: AdapterFile): Role | null;
-  /** Routes whose method and full pattern are both written in the syntax. */
+  /**
+   * Whether routes() could read anything from this file. The parser frees
+   * each syntax tree once it has read what it needs, and keeps only the ones
+   * answered true here for routes(), so a big repository fits in memory.
+   * Answering true for a file routes() ignores only costs memory; answering
+   * false for one it reads would lose routes, so this must cover every file
+   * routes() can draw on.
+   */
+  routeSource(projectRelativePath: string, text: string): boolean;
+  /** Routes whose method and full pattern are both written in the syntax. Given only the files routeSource() kept. */
   routes(project: ProjectFiles): RouteReport;
 }

@@ -1,31 +1,43 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowDownRight, ArrowUpLeft, FileWarning, FolderOpen, Loader2, MousePointerClick } from "lucide-react";
+import { ArrowDownRight, ArrowUpLeft, Crosshair, ExternalLink, FileWarning, FolderOpen, Loader2, LogIn, MousePointerClick } from "lucide-react";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { fileSourceAction, type FileSource } from "@/app/(workspace)/analyses/[id]/actions";
 import { ExplanationPanel, targetKey, type ExplainTarget } from "@/components/explanation-panel";
 import { CodeBlock } from "@/components/ui/code-block";
-import { CopyButton, SectionLabel } from "@/components/ui/primitives";
+import { AnimatedNumber, CopyButton, CopyLinkButton, IconButton, IconLink, SectionLabel } from "@/components/ui/primitives";
 import { RoleIcon } from "@/components/ui/role-icon";
+import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/cn";
 import { roleColor } from "@/lib/graph/role-style";
-import { groupFan, groupId } from "@/lib/graph/view";
-import { directoryOf, edgeLabel } from "@/lib/graph/workspace";
-import type { Edge, ParsedFile } from "@/lib/parser/types";
-import { railLabel, UNCLASSIFIED, type RailKey } from "@/lib/roles";
+import { directoryOf, edgeLabel, githubUrl } from "@/lib/graph/workspace";
+import type { Edge, MapFile } from "@/lib/parser/types";
+import { folderNameRole, railLabel, UNCLASSIFIED, type RailKey } from "@/lib/roles";
 import { useWorkspace, type InspectorTab } from "./context";
 import { RepositoryOverview } from "./overview";
 
 export function Inspector({ className }: { className?: string }) {
-  const { selection, byPath, folding } = useWorkspace();
+  const { selection, byPath, folding, files, hidden } = useWorkspace();
+  const dir = selection?.kind === "group" ? selection.id.slice(selection.id.indexOf(":") + 1) : null;
+  // A box on the map holds what it's drawn holding; a folder that isn't a box
+  // right now (the one just entered, say) holds everything below it.
+  const inFolder = useMemo(() => {
+    if (dir === null) return [];
+    const box = folding.groups.find((g) => g.dir === dir);
+    if (box) return box.files;
+    return files.filter((f) => !hidden.has(f.path) && (dir === "." || f.path.startsWith(`${dir}/`))).map((f) => f.path);
+  }, [dir, folding, files, hidden]);
   if (!selection) return <RepositoryOverview className={className} />;
   if (selection.kind === "file") {
     const file = byPath.get(selection.path);
     return file ? <FileInspector file={file} className={className} /> : <Empty className={className} />;
   }
-  const group = folding.groups.find((g) => groupId(g.dir) === selection.id);
-  return group ? <FolderInspector dir={group.dir} files={group.files} className={className} /> : <Empty className={className} />;
+  return dir !== null && inFolder.length > 0 ? (
+    <FolderInspector dir={dir} files={inFolder} className={className} />
+  ) : (
+    <Empty className={className} />
+  );
 }
 
 function Empty({ className }: { className?: string }) {
@@ -51,12 +63,13 @@ const TABS: { id: InspectorTab; label: string }[] = [
   { id: "code", label: "Code" },
 ];
 
-function FileInspector({ file, className }: { file: ParsedFile; className?: string }) {
-  const { tab, setTab, edges, roles, names, modelRoles } = useWorkspace();
+function FileInspector({ file, className }: { file: MapFile; className?: string }) {
+  const { tab, setTab, edges, roles, names, modelRoles, setCentre, repository, commitSha } = useWorkspace();
   const pill = useId();
   const outgoing = useMemo(() => edges.filter((e) => e.source === file.path), [edges, file.path]);
   const incoming = useMemo(() => edges.filter((e) => e.target === file.path), [edges, file.path]);
   const role = roles.get(file.path) ?? UNCLASSIFIED;
+  const basis = roleBasis(file, modelRoles.has(file.path));
   const counts: Partial<Record<InspectorTab, number>> = { dependencies: outgoing.length, dependents: incoming.length };
 
   return (
@@ -67,13 +80,20 @@ function FileInspector({ file, className }: { file: ParsedFile; className?: stri
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h3 className="truncate text-[15px] font-semibold tracking-tight text-fg">{names.get(file.path) ?? file.path}</h3>
-              <RoleBadge role={role} byModel={file.role === null && modelRoles.has(file.path)} />
+              <RoleBadge role={role} basis={basis} />
             </div>
-            <p className="mt-0.5 truncate font-mono text-[11px] text-subtle" title={file.path}>
-              {file.path}
-            </p>
+            <CopyPath path={file.path} />
+            {basis && <p className="mt-0.5 text-[10.5px] text-subtle">{BASIS[basis].long}</p>}
           </div>
-          <CopyButton text={file.path} label="Path" toastTitle={`Copied ${file.path}`} />
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-line-strong p-0.5">
+            <IconButton label="Focus on its neighbours (F)" tooltipSide="bottom" onClick={() => setCentre("focus")} className="size-7 rounded-md">
+              <Crosshair className="size-3.5" />
+            </IconButton>
+            <IconLink label="Open on GitHub" tooltipSide="bottom" href={githubUrl(repository, commitSha, file.path)} className="size-7 rounded-md">
+              <ExternalLink className="size-3.5" />
+            </IconLink>
+            <CopyLinkButton className="size-7 rounded-md" />
+          </div>
         </div>
         <dl className="grid grid-cols-4 gap-1.5">
           <Stat label="Incoming" value={file.fanIn} hint="Distinct files that import it" />
@@ -118,16 +138,34 @@ function FileInspector({ file, className }: { file: ParsedFile; className?: stri
   );
 }
 
-function RoleBadge({ role, byModel }: { role: RailKey; byModel: boolean }) {
+type RoleBasis = "model" | "folder" | "exports" | null;
+
+// Where a role came from, when it isn't a framework's own convention: the
+// model's label, the name of the folder the file sits in, or the fact that
+// it exports only types. Worked out with the same rules the parser applied.
+function roleBasis(file: MapFile, modelLabelled: boolean): RoleBasis {
+  if (file.role === null) return modelLabelled ? "model" : null;
+  const byFolder = folderNameRole(file.path);
+  if (file.role === "types" && byFolder !== "types") return "exports";
+  return byFolder === file.role ? "folder" : null;
+}
+
+// One line each: no framework convention names these files, so the line says what did.
+const BASIS: Record<Exclude<RoleBasis, null>, { long: string }> = {
+  model: { long: "Role given by the model" },
+  folder: { long: "Role from its folder's name" },
+  exports: { long: "Role from its exports: all types" },
+};
+
+function RoleBadge({ role, basis }: { role: RailKey; basis: RoleBasis }) {
   const color = roleColor(role);
   return (
     <span
       className="shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium"
       style={{ color, backgroundColor: `${color}1f` }}
-      title={byModel ? "No convention identified this file; the model labelled it" : undefined}
+      title={basis ? BASIS[basis].long : undefined}
     >
       {railLabel(role)}
-      {byModel && " · model"}
     </span>
   );
 }
@@ -136,12 +174,14 @@ export function Stat({ label, value, hint }: { label: string; value: number; hin
   return (
     <div className="rounded-lg border border-line bg-ink/[0.02] px-2 py-1.5" title={hint}>
       <dt className="text-[10px] text-subtle">{label}</dt>
-      <dd className="font-mono text-[15px] font-medium tabular-nums text-fg">{value.toLocaleString("en")}</dd>
+      <dd className="font-mono text-[15px] font-medium tabular-nums text-fg">
+        <AnimatedNumber value={value} />
+      </dd>
     </div>
   );
 }
 
-function FileOverview({ file, outgoing, incoming }: { file: ParsedFile; outgoing: Edge[]; incoming: Edge[] }) {
+function FileOverview({ file, outgoing, incoming }: { file: MapFile; outgoing: Edge[]; incoming: Edge[] }) {
   const { files, setTab } = useWorkspace();
   // Where this file's count sits among the repository's: a fact about the
   // distribution, so the bar means the same thing for every file here.
@@ -244,7 +284,7 @@ function dedupe<T extends { path: string }>(rows: T[]): T[] {
 }
 
 function EdgeList({ edges, direction }: { edges: Edge[]; direction: "in" | "out" }) {
-  const { names } = useWorkspace();
+  const { names, repository, commitSha } = useWorkspace();
   if (edges.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-line px-3 py-6 text-center text-[12.5px] text-subtle">
@@ -258,7 +298,15 @@ function EdgeList({ edges, direction }: { edges: Edge[]; direction: "in" | "out"
         const other = direction === "out" ? e.target : e.source;
         const label = edgeLabel(e);
         return (
-          <li key={`${e.source}>${e.target}>${e.kind}`}>
+          <li key={`${e.source}>${e.target}>${e.kind}`} className="group/edge relative">
+            <IconLink
+              label={`Open line ${e.line} on GitHub`}
+              tooltipSide="left"
+              href={githubUrl(repository, commitSha, e.source, e.line)}
+              className="absolute bottom-1.5 right-1.5 z-10 size-6 rounded-md opacity-0 transition group-hover/edge:opacity-100 focus-visible:opacity-100"
+            >
+              <ExternalLink className="size-3" />
+            </IconLink>
             <PathCard path={other}>
               <div className="flex items-center gap-2">
                 <NeighbourIcon path={other} size="sm" />
@@ -290,8 +338,8 @@ function EdgeList({ edges, direction }: { edges: Edge[]; direction: "in" | "out"
 // The source the parser read, fetched once per file per page load.
 const sources = new Map<string, Promise<FileSource>>();
 
-function CodeTab({ file, outgoing }: { file: ParsedFile; outgoing: Edge[] }) {
-  const { analysisId, names } = useWorkspace();
+function CodeTab({ file, outgoing }: { file: MapFile; outgoing: Edge[] }) {
+  const { analysisId, names, repository, commitSha } = useWorkspace();
   const key = `${analysisId}:${file.path}`;
   const [loaded, setLoaded] = useState<{ key: string; source: FileSource } | null>(null);
   useEffect(() => {
@@ -328,9 +376,20 @@ function CodeTab({ file, outgoing }: { file: ParsedFile; outgoing: Edge[] }) {
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <p className="truncate font-mono text-[11px] text-subtle">{file.path}</p>
-        <CopyButton text={source.text} label="Copy code" toastTitle={`Copied ${names.get(file.path) ?? file.path}`} />
+        <span className="flex shrink-0 items-center gap-1.5">
+          <a
+            href={githubUrl(repository, commitSha, file.path)}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-line-strong bg-ink/[0.03] px-2 py-1 text-[11px] font-medium text-muted transition hover:bg-ink/[0.07] hover:text-fg"
+          >
+            <ExternalLink className="size-3.5" aria-hidden />
+            GitHub
+          </a>
+          <CopyButton text={source.text} label="Copy code" toastTitle={`Copied ${names.get(file.path) ?? file.path}`} />
+        </span>
       </div>
-      <CodeBlock code={source.text} highlightLines={lines} className="max-h-[520px]" />
+      <CodeBlock code={source.text} highlightLines={lines} scrollToFirst className="max-h-[520px]" />
       <p className="text-[11px] text-subtle">
         The file at the analysed commit. Highlighted lines are the statements that create edges on the map.
       </p>
@@ -341,8 +400,18 @@ function CodeTab({ file, outgoing }: { file: ParsedFile; outgoing: Edge[] }) {
 // ── A folder ─────────────────────────────────────────────────────────────────
 
 function FolderInspector({ dir, files: paths, className }: { dir: string; files: string[]; className?: string }) {
-  const { folding, edges, byPath, roles, names } = useWorkspace();
-  const fan = useMemo(() => groupFan(folding, edges).get(dir) ?? { fanIn: 0, fanOut: 0 }, [folding, edges, dir]);
+  const { edges, byPath, roles, names, scope, goTo } = useWorkspace();
+  // Distinct files across its edge, the unit every file's own counts use.
+  const fan = useMemo(() => {
+    const inside = new Set(paths);
+    const from = new Set<string>();
+    const to = new Set<string>();
+    for (const e of edges) {
+      if (!inside.has(e.source) && inside.has(e.target)) from.add(e.source);
+      if (inside.has(e.source) && !inside.has(e.target)) to.add(e.target);
+    }
+    return { fanIn: from.size, fanOut: to.size };
+  }, [paths, edges]);
   const lines = useMemo(() => paths.reduce((n, p) => n + (byPath.get(p)?.lines ?? 0), 0), [paths, byPath]);
   const byRole = useMemo(() => {
     const counts = new Map<RailKey, number>();
@@ -367,8 +436,18 @@ function FolderInspector({ dir, files: paths, className }: { dir: string; files:
           </div>
           <CopyButton text={dir} label="Path" toastTitle={`Copied ${dir}`} />
         </div>
+        {dir !== scope && (
+          <button
+            type="button"
+            onClick={() => goTo(dir)}
+            className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-ink/[0.03] text-[12.5px] font-medium text-fg transition hover:bg-ink/[0.07]"
+          >
+            <LogIn className="size-3.5" aria-hidden />
+            Go inside {dir === "." ? "the repository root" : `${dir.split("/").pop()}/`}
+          </button>
+        )}
         <dl className="grid grid-cols-4 gap-1.5">
-          <Stat label="Files" value={paths.length} hint="Files folded into this box" />
+          <Stat label="Files" value={paths.length} hint="Files in this box" />
           <Stat label="In from" value={fan.fanIn} hint="Distinct files outside that import something here" />
           <Stat label="Out to" value={fan.fanOut} hint="Distinct files outside that something here imports" />
           <Stat label="Lines" value={lines} hint="Lines across its files" />
@@ -498,6 +577,24 @@ function PathCard({ path, children }: { path: string; children: ReactNode }) {
       className="w-full rounded-lg border border-line bg-ink/[0.015] p-2.5 text-left transition hover:border-line-strong hover:bg-ink/[0.035]"
     >
       {children}
+    </button>
+  );
+}
+
+// The path under a file's name copies itself when clicked.
+function CopyPath({ path }: { path: string }) {
+  const toast = useToast();
+  return (
+    <button
+      type="button"
+      title="Copy the path"
+      onClick={async () => {
+        await navigator.clipboard.writeText(path);
+        toast({ title: "Path copied", description: path });
+      }}
+      className="mt-0.5 block max-w-full truncate text-left font-mono text-[11px] text-subtle transition hover:text-fg"
+    >
+      {path}
     </button>
   );
 }

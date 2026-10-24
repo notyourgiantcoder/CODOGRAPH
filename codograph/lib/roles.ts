@@ -26,7 +26,9 @@ export const ROLES = [
   { id: "repository", label: "Repositories" },
   { id: "component", label: "Components" },
   { id: "hook", label: "Hooks" },
+  { id: "store", label: "Stores" },
   { id: "util", label: "Utilities" },
+  { id: "types", label: "Types" },
   { id: "theme-override", label: "Theme overrides" },
   // Plumbing
   { id: "middleware", label: "Middleware" },
@@ -36,6 +38,7 @@ export const ROLES = [
   { id: "filter", label: "Exception filters" },
   { id: "metadata", label: "Metadata files" },
   { id: "instrumentation", label: "Instrumentation" },
+  { id: "script", label: "Scripts" },
   { id: "config", label: "Config files" },
   { id: "test", label: "Tests" },
 ] as const;
@@ -123,4 +126,37 @@ export function railCategories(frameworks: readonly string[], roles: readonly (R
 
 function isFramework(name: string): name is Framework {
   return Object.hasOwn(FRAMEWORK_ROLES, name);
+}
+
+/**
+ * The role a file's folder gives it when no framework convention does: the
+ * nearest folder with a conventional name decides, so lib/stores/x.ts is a
+ * store. A fact about where the file sits, the same kind of fact as Express's
+ * routes/ and controllers/ folders.
+ */
+export const FOLDER_NAME_ROLES: Readonly<Record<string, Role>> = {
+  lib: "util",
+  libs: "util",
+  util: "util",
+  utils: "util",
+  utilities: "util",
+  helper: "util",
+  helpers: "util",
+  types: "types",
+  typings: "types",
+  interfaces: "types",
+  store: "store",
+  stores: "store",
+  scripts: "script",
+  service: "service",
+  services: "service",
+};
+
+export function folderNameRole(path: string): Role | null {
+  const folders = path.split("/").slice(0, -1);
+  for (let i = folders.length - 1; i >= 0; i--) {
+    const role = FOLDER_NAME_ROLES[folders[i] ?? ""];
+    if (role) return role;
+  }
+  return null;
 }

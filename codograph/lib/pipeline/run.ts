@@ -4,8 +4,8 @@ import path from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseSelection, selectFiles } from "../parser/index.ts";
 import { SCHEMA_VERSION } from "../parser/types.ts";
-import type { Database, Enums } from "../supabase/database.types.ts";
-import { downloadArchive, resolveHeadCommit, type Repository } from "./github.ts";
+import type { Database, Enums, Json } from "../supabase/database.types.ts";
+import { downloadRepository, resolveHeadCommit, type Repository } from "./github.ts";
 import { STALE_AFTER_MS } from "./stages.ts";
 import { storeResult, storedCoverage } from "./store.ts";
 
@@ -25,7 +25,14 @@ export class SupersededError extends Error {
  * scoped to it, so a stale run that was taken over can't change the row the
  * newer run now owns.
  */
-export type ClaimedRun = { analysisId: string; organizationId: string; repository: Repository; claimedStartedAt: string };
+export type ClaimedRun = {
+  analysisId: string;
+  organizationId: string;
+  repository: Repository;
+  claimedStartedAt: string;
+  /** The last run's outcome, when it completed with this parser: what its stored map was parsed from. */
+  stored: { commitSha: string; coverage: Json; detectedProjects: Json } | null;
+};
 
 export async function runAnalysis(db: Db, analysisId: string): Promise<void> {
   await continueRun(db, await claimAnalysis(db, analysisId));
@@ -40,18 +47,34 @@ export async function continueRun(db: Db, claimed: ClaimedRun): Promise<void> {
     workdir = await mkdtemp(path.join(tmpdir(), "cartograph-"));
     await enter(db, claimed, "fetch", `Resolving the latest commit of ${repository.owner}/${repository.name}`);
     const sha = await resolveHeadCommit(repository);
+
+    // The same commit through the same parser gives the same map, byte for
+    // byte, and that map is already stored. Nothing is downloaded or parsed.
+    if (claimed.stored?.commitSha === sha) {
+      await update(db, claimed, {
+        status: "complete",
+        stage: "store",
+        finished_at: new Date().toISOString(),
+        coverage: claimed.stored.coverage,
+        detected_projects: claimed.stored.detectedProjects,
+        schema_version: SCHEMA_VERSION,
+        stage_message: `No new commits since the last analysis, so its map at ${sha.slice(0, 7)} still holds`,
+      });
+      return;
+    }
+
     await update(db, claimed, {
       commit_sha: sha,
       stage_message: `Downloading ${repository.owner}/${repository.name} at ${sha.slice(0, 7)}`,
     });
-    await downloadArchive(repository, sha, workdir);
+    await downloadRepository(repository, sha, workdir);
 
     await enter(db, claimed, "select", "Walking the repository for TypeScript and JavaScript files");
     const selection = selectFiles(workdir);
 
     const { candidates, skipped } = selection.walk;
     await enter(db, claimed, "parse", `Parsing ${count(candidates.length, "file")}${skipped.length ? `, ${skipped.length} skipped` : ""}`);
-    const result = parseSelection(selection);
+    const result = await parseSelection(selection);
 
     await enter(
       db,
@@ -92,9 +115,22 @@ export async function continueRun(db: Db, claimed: ClaimedRun): Promise<void> {
 // two runs of the same analysis can't overlap. A stale run can be taken over.
 // Separate from the rest so a request can claim before it responds, and the
 // page it lands on already says the run has started.
+//
+// The outcome it clears is read first, and the claim only lands if no other
+// run started in between, so what's kept is the outcome this run replaced. A
+// completed row's files and edges stay stored until a run reaches store.
 export async function claimAnalysis(db: Db, analysisId: string): Promise<ClaimedRun> {
   const staleBefore = new Date(Date.now() - STALE_AFTER_MS).toISOString();
-  const { data, error } = await db
+  const before = await db
+    .from("analyses")
+    .select("status, started_at, commit_sha, schema_version, coverage, detected_projects")
+    .eq("id", analysisId)
+    .maybeSingle();
+  if (before.error) throw new Error(`Reading analysis ${analysisId} failed: ${before.error.message}`);
+  if (!before.data) throw new AlreadyRunningError(`Analysis ${analysisId} is already running, or doesn't exist`);
+  const last = before.data;
+
+  const claim = db
     .from("analyses")
     .update({
       status: "running",
@@ -108,7 +144,8 @@ export async function claimAnalysis(db: Db, analysisId: string): Promise<Claimed
       schema_version: null,
     })
     .eq("id", analysisId)
-    .or(`status.neq.running,started_at.lt.${staleBefore}`)
+    .or(`status.neq.running,started_at.lt.${staleBefore}`);
+  const { data, error } = await (last.started_at === null ? claim.is("started_at", null) : claim.eq("started_at", last.started_at))
     .select("organization_id, started_at, projects!inner(repo_owner, repo_name)")
     .maybeSingle();
   if (error) throw new Error(`Starting analysis ${analysisId} failed: ${error.message}`);
@@ -121,6 +158,10 @@ export async function claimAnalysis(db: Db, analysisId: string): Promise<Claimed
     repository: { owner: data.projects.repo_owner, name: data.projects.repo_name },
     // As the database stored it, so matching on it later compares like with like.
     claimedStartedAt: data.started_at,
+    stored:
+      last.status === "complete" && last.commit_sha && last.schema_version === SCHEMA_VERSION && last.coverage !== null && last.detected_projects !== null
+        ? { commitSha: last.commit_sha, coverage: last.coverage, detectedProjects: last.detected_projects }
+        : null,
   };
 }
 

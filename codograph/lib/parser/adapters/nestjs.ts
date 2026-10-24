@@ -49,8 +49,19 @@ export const nestjsAdapter: FrameworkAdapter = {
     const suffix = SUFFIX.exec(file.path.slice(file.path.lastIndexOf("/") + 1));
     return (suffix?.[1] ? SUFFIX_ROLES[suffix[1]] : undefined) ?? toolRole(file.path);
   },
+  routeSource: nestRouteSource,
   routes: nestRoutes,
 };
+
+// nestRoutes only ever reacts to these names: the calls and imports that set a
+// prefix or versioning, the bootstrap it counts, and the decorators, which
+// come from @nestjs/common. A file whose text has none of them can't change a
+// single route, so its syntax needn't be kept.
+const ROUTE_WORDS = ["@nestjs/common", "setGlobalPrefix", "enableVersioning", "RouterModule", "NestFactory"];
+
+function nestRouteSource(_path: string, text: string): boolean {
+  return ROUTE_WORDS.some((word) => text.includes(word));
+}
 
 function nestRoutes({ files, unparsed }: ProjectFiles): RouteReport {
   const report: RouteReport = { routes: [], omitted: [], withheld: null };

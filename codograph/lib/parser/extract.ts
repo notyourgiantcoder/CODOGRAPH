@@ -1,5 +1,40 @@
-import { Node, SyntaxKind, type ImportClause, type SourceFile } from "ts-morph";
+import { Node, ts, type ImportClause, type SourceFile } from "ts-morph";
 import type { ImportKind } from "./types.ts";
+
+// Searching a whole file goes through the compiler's own tree, not ts-morph's
+// wrappers: wrapping every node of a large repository costs minutes and
+// gigabytes for what one walk of plain nodes answers. Top-level statements,
+// few and already wrapped, are still read through ts-morph.
+
+/**
+ * Every node the extractors search a file for, gathered in one walk. Pre-order
+ * through forEachChild, the order ts-morph's descendant searches use, so what
+ * is found and the order it's found in are the same.
+ */
+export type Scan = {
+  source: ts.SourceFile;
+  calls: ts.CallExpression[];
+  /** Plain `=` assignments: the CommonJS export forms. */
+  assignments: ts.BinaryExpression[];
+};
+
+export function scanFile(sourceFile: SourceFile): Scan {
+  const source = sourceFile.compilerNode;
+  const calls: ts.CallExpression[] = [];
+  const assignments: ts.BinaryExpression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) calls.push(node);
+    else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) assignments.push(node);
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(source, visit);
+  return { source, calls, assignments };
+}
+
+/** The line a node starts on, its leading comments left out, as ts-morph counts it. */
+function lineOf(node: ts.Node, source: ts.SourceFile): number {
+  return source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+}
 
 export type RawImport = {
   kind: ImportKind;
@@ -11,7 +46,7 @@ export type RawImport = {
   | { literal: false; expression: string }
 );
 
-export function extractImports(sourceFile: SourceFile): RawImport[] {
+export function extractImports(sourceFile: SourceFile, scan: Scan): RawImport[] {
   const found: RawImport[] = [];
 
   // Static imports and re-exports are only legal at the top level of a module.
@@ -56,21 +91,22 @@ export function extractImports(sourceFile: SourceFile): RawImport[] {
   // import() and require() can appear anywhere an expression can. The
   // `require` inside `import x = require("y")` above is not a call expression,
   // so nothing here sees it a second time.
-  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const callee = call.getExpression();
+  const { source } = scan;
+  for (const call of scan.calls) {
+    const callee = call.expression;
     const kind: ImportKind | null =
-      callee.getKind() === SyntaxKind.ImportKeyword
+      callee.kind === ts.SyntaxKind.ImportKeyword
         ? "dynamic-import"
-        : Node.isIdentifier(callee) && callee.getText() === "require"
+        : ts.isIdentifier(callee) && callee.getText(source) === "require"
           ? "require"
           : null;
     if (kind === null) continue;
-    const [argument] = call.getArguments();
-    const line = call.getStartLineNumber();
-    if (argument && (Node.isStringLiteral(argument) || Node.isNoSubstitutionTemplateLiteral(argument))) {
-      found.push({ kind, literal: true, specifier: argument.getLiteralValue(), line, typeOnly: false });
+    const [argument] = call.arguments;
+    const line = lineOf(call, source);
+    if (argument && (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))) {
+      found.push({ kind, literal: true, specifier: argument.text, line, typeOnly: false });
     } else {
-      found.push({ kind, literal: false, expression: argument ? argument.getText() : "", line, typeOnly: false });
+      found.push({ kind, literal: false, expression: argument ? argument.getText(source) : "", line, typeOnly: false });
     }
   }
 
@@ -101,22 +137,21 @@ const FETCH_RECEIVERS = new Set(["window", "globalThis", "self"]);
  * is written in the call counts: a URL held in a variable is computed, because
  * following the variable would mean deciding which value it has at runtime.
  */
-export function extractFetches(sourceFile: SourceFile): RawFetch[] {
+export function extractFetches(scan: Scan): RawFetch[] {
+  const { source } = scan;
   const found: RawFetch[] = [];
-  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const callee = call.getExpression();
+  for (const call of scan.calls) {
+    const callee = call.expression;
     const isFetch =
-      (Node.isIdentifier(callee) && callee.getText() === "fetch") ||
-      (Node.isPropertyAccessExpression(callee) &&
-        callee.getName() === "fetch" &&
-        FETCH_RECEIVERS.has(callee.getExpression().getText()));
+      (ts.isIdentifier(callee) && callee.getText(source) === "fetch") ||
+      (ts.isPropertyAccessExpression(callee) && callee.name.text === "fetch" && FETCH_RECEIVERS.has(callee.expression.getText(source)));
     if (!isFetch) continue;
-    const [urlArgument, options] = call.getArguments();
+    const [urlArgument, options] = call.arguments;
     if (!urlArgument) continue;
     found.push({
-      line: call.getStartLineNumber(),
-      text: urlArgument.getText(),
-      method: fetchMethod(options),
+      line: lineOf(call, source),
+      text: urlArgument.getText(source),
+      method: fetchMethod(options, source),
       url: fetchUrl(urlArgument),
     });
   }
@@ -125,13 +160,13 @@ export function extractFetches(sourceFile: SourceFile): RawFetch[] {
 
 // Placeholders are kept as whole segments; the query string and fragment never
 // choose a route, so they're dropped along with anything placed in them.
-function fetchUrl(argument: Node): RawFetch["url"] {
+function fetchUrl(argument: ts.Expression): RawFetch["url"] {
   let written: (string | null)[];
-  if (Node.isStringLiteral(argument) || Node.isNoSubstitutionTemplateLiteral(argument)) {
-    written = [argument.getLiteralValue()];
-  } else if (Node.isTemplateExpression(argument)) {
-    written = [argument.getHead().getLiteralText()];
-    for (const span of argument.getTemplateSpans()) written.push(null, span.getLiteral().getLiteralText());
+  if (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) {
+    written = [argument.text];
+  } else if (ts.isTemplateExpression(argument)) {
+    written = [argument.head.text];
+    for (const span of argument.templateSpans) written.push(null, span.literal.text);
   } else {
     return { form: "computed" };
   }
@@ -165,19 +200,19 @@ function fetchUrl(argument: Node): RawFetch["url"] {
   return { form: "path", segments: segments.slice(1).filter((s, i, all) => !(i === all.length - 1 && "static" in s && s.static === "")) };
 }
 
-function fetchMethod(options: Node | undefined): string | null {
+function fetchMethod(options: ts.Expression | undefined, source: ts.SourceFile): string | null {
   if (!options) return "GET";
-  if (!Node.isObjectLiteralExpression(options)) return null;
+  if (!ts.isObjectLiteralExpression(options)) return null;
   let method = "GET";
-  for (const property of options.getProperties()) {
-    if (Node.isSpreadAssignment(property)) return null;
-    if (Node.isShorthandPropertyAssignment(property) && property.getName() === "method") return null;
-    if (!Node.isPropertyAssignment(property)) continue;
-    const name = property.getNameNode();
-    const key = Node.isIdentifier(name) ? name.getText() : literalText(name);
+  for (const property of options.properties) {
+    if (ts.isSpreadAssignment(property)) return null;
+    if (ts.isShorthandPropertyAssignment(property) && property.name.text === "method") return null;
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = property.name;
+    const key = ts.isIdentifier(name) ? name.getText(source) : literalText(name);
     if (key === null) return null; // a computed key could be "method"
     if (key !== "method") continue;
-    const value = literalText(property.getInitializer());
+    const value = literalText(property.initializer);
     if (value === null) return null;
     method = value.toUpperCase();
   }
@@ -187,36 +222,39 @@ function fetchMethod(options: Node | undefined): string | null {
 /** What `module.exports = <value>` is called when the value's own names can't all be read. */
 export const WHOLE_MODULE = "module.exports";
 
+type Add = (name: string, at: number) => void;
+
 /**
  * The names a file exports, read from its own syntax: ESM export statements at
  * the top level, and CommonJS assignments to module.exports or exports
  * wherever they appear. Source order, each name once.
  */
-export function extractExports(sourceFile: SourceFile): string[] {
+export function extractExports(sourceFile: SourceFile, scan: Scan): string[] {
+  const { source } = scan;
   const found: { name: string; at: number }[] = [];
-  const add = (name: string, at: Node) => found.push({ name, at: at.getStart() });
+  const add: Add = (name, at) => found.push({ name, at });
 
   for (const statement of sourceFile.getStatements()) {
     if (Node.isExportDeclaration(statement)) {
       // `export * from` names nothing here; `export * as ns from` names ns.
       const namespace = statement.getNamespaceExport();
-      if (namespace) add(namespace.getName(), statement);
+      if (namespace) add(namespace.getName(), statement.getStart());
       for (const specifier of statement.getNamedExports()) {
-        add(specifier.getAliasNode()?.getText() ?? specifier.getName(), specifier);
+        add(specifier.getAliasNode()?.getText() ?? specifier.getName(), specifier.getStart());
       }
     } else if (Node.isExportAssignment(statement)) {
       // `export = x` is TypeScript's spelling of module.exports = x.
-      if (statement.isExportEquals()) addWholeModule(statement.getExpression(), add);
-      else add("default", statement);
+      if (statement.isExportEquals()) addWholeModule(statement.getExpression().compilerNode, add, source);
+      else add("default", statement.getStart());
     } else if (Node.isVariableStatement(statement)) {
       if (!statement.hasExportKeyword()) continue;
       for (const declaration of statement.getDeclarations()) {
         const name = declaration.getNameNode();
-        if (Node.isIdentifier(name)) add(name.getText(), name);
+        if (Node.isIdentifier(name)) add(name.getText(), name.getStart());
         // `export const { a, b: c } = x` exports a and c.
-        else for (const element of name.getDescendantsOfKind(SyntaxKind.BindingElement)) {
+        else for (const element of name.getDescendantsOfKind(ts.SyntaxKind.BindingElement)) {
           const bound = element.getNameNode();
-          if (Node.isIdentifier(bound)) add(bound.getText(), bound);
+          if (Node.isIdentifier(bound)) add(bound.getText(), bound.getStart());
         }
       }
     } else if (
@@ -230,75 +268,115 @@ export function extractExports(sourceFile: SourceFile): string[] {
     ) {
       if (!statement.hasExportKeyword()) continue;
       if (statement.hasDefaultKeyword()) {
-        add("default", statement);
+        add("default", statement.getStart());
         continue;
       }
       const name = statement.getNameNode();
       // `declare module "x"` is named by a string and exports nothing from this file.
-      if (name && Node.isIdentifier(name)) add(name.getText(), name);
+      if (name && Node.isIdentifier(name)) add(name.getText(), name.getStart());
     }
   }
 
-  for (const assignment of sourceFile.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
-    if (assignment.getOperatorToken().getKind() !== SyntaxKind.EqualsToken) continue;
-    const target = assignment.getLeft();
-    if (isModuleExports(target)) {
-      addWholeModule(assignment.getRight(), add);
+  for (const assignment of scan.assignments) {
+    const target = assignment.left;
+    if (isModuleExports(target, source)) {
+      addWholeModule(assignment.right, add, source);
       continue;
     }
     // module.exports.name = …, exports.name = …, and the ["name"] forms.
-    if (Node.isPropertyAccessExpression(target) || Node.isElementAccessExpression(target)) {
-      const object = target.getExpression();
-      if (!isModuleExports(object) && !(Node.isIdentifier(object) && object.getText() === "exports")) continue;
-      const name = Node.isPropertyAccessExpression(target) ? target.getName() : literalText(target.getArgumentExpression());
-      if (name !== null) add(name, target);
+    if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+      const object = target.expression;
+      if (!isModuleExports(object, source) && !(ts.isIdentifier(object) && object.getText(source) === "exports")) continue;
+      const name = ts.isPropertyAccessExpression(target) ? target.name.text : literalText(target.argumentExpression);
+      if (name !== null) add(name, target.getStart(source));
     }
   }
 
   // Object.defineProperty(exports, "name", …) is how compiled CommonJS writes
   // them. "__esModule" is the compiler's own marker, not something exported.
-  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    if (call.getExpression().getText() !== "Object.defineProperty") continue;
-    const [object, key] = call.getArguments();
-    if (!object || !(isModuleExports(object) || object.getText() === "exports")) continue;
+  for (const call of scan.calls) {
+    if (call.expression.getText(source) !== "Object.defineProperty") continue;
+    const [object, key] = call.arguments;
+    if (!object || !(isModuleExports(object, source) || object.getText(source) === "exports")) continue;
     const name = literalText(key);
-    if (name !== null && name !== "__esModule") add(name, call);
+    if (name !== null && name !== "__esModule") add(name, call.getStart(source));
   }
 
   found.sort((a, b) => a.at - b.at);
   return [...new Set(found.map((f) => f.name))];
 }
 
+/**
+ * Whether everything the file exports is a type: exported interfaces and type
+ * aliases, and export lists marked type-only. Anything that might carry a
+ * value says no: a value declaration, a default or `export =`, `export *`, an
+ * export list not marked type-only, or any CommonJS export. A file exporting
+ * nothing isn't a types file either.
+ */
+export function exportsOnlyTypes(sourceFile: SourceFile, scan: Scan): boolean {
+  let exportsSomething = false;
+  for (const statement of sourceFile.getStatements()) {
+    if (Node.isInterfaceDeclaration(statement) || Node.isTypeAliasDeclaration(statement)) {
+      if (statement.hasExportKeyword()) exportsSomething = true;
+    } else if (Node.isExportDeclaration(statement)) {
+      if (!(statement.isTypeOnly() || allTypeOnly(statement.getNamedExports()))) return false;
+      exportsSomething = true;
+    } else if (Node.isExportAssignment(statement)) {
+      return false;
+    } else if (
+      (Node.isVariableStatement(statement) ||
+        Node.isFunctionDeclaration(statement) ||
+        Node.isClassDeclaration(statement) ||
+        Node.isEnumDeclaration(statement) ||
+        Node.isModuleDeclaration(statement) ||
+        Node.isImportEqualsDeclaration(statement)) &&
+      statement.hasExportKeyword()
+    ) {
+      return false;
+    }
+  }
+  const { source } = scan;
+  const commonJs =
+    scan.assignments.some((a) => {
+      const target = a.left;
+      if (isModuleExports(target, source)) return true;
+      if (!ts.isPropertyAccessExpression(target) && !ts.isElementAccessExpression(target)) return false;
+      const object = target.expression;
+      return isModuleExports(object, source) || (ts.isIdentifier(object) && object.getText(source) === "exports");
+    }) || scan.calls.some((c) => c.expression.getText(source) === "Object.defineProperty");
+  return exportsSomething && !commonJs;
+}
+
 // `module.exports = { a, b }` exports a and b. Anything else, including an
 // object with a spread or a computed key, is one value whose names aren't all
 // written here, so it's recorded as that value rather than as a partial list.
-function addWholeModule(value: Node, add: (name: string, at: Node) => void): void {
-  if (Node.isObjectLiteralExpression(value)) {
-    const names: { name: string; at: Node }[] = [];
-    for (const property of value.getProperties()) {
-      if (Node.isSpreadAssignment(property)) return add(WHOLE_MODULE, value);
-      const nameNode = property.getNameNode();
-      const name = Node.isIdentifier(nameNode) ? nameNode.getText() : literalText(nameNode);
-      if (name === null) return add(WHOLE_MODULE, value);
-      names.push({ name, at: property });
+function addWholeModule(value: ts.Expression, add: Add, source: ts.SourceFile): void {
+  if (ts.isObjectLiteralExpression(value)) {
+    const names: { name: string; at: number }[] = [];
+    for (const property of value.properties) {
+      if (ts.isSpreadAssignment(property)) return add(WHOLE_MODULE, value.getStart(source));
+      const nameNode = property.name;
+      const name = ts.isIdentifier(nameNode) ? nameNode.getText(source) : literalText(nameNode);
+      if (name === null) return add(WHOLE_MODULE, value.getStart(source));
+      names.push({ name, at: property.getStart(source) });
     }
     for (const n of names) add(n.name, n.at);
     return;
   }
-  add(WHOLE_MODULE, value);
+  add(WHOLE_MODULE, value.getStart(source));
 }
 
-function isModuleExports(node: Node): boolean {
+function isModuleExports(node: ts.Node, source: ts.SourceFile): boolean {
   return (
-    Node.isPropertyAccessExpression(node) &&
-    node.getName() === "exports" &&
-    Node.isIdentifier(node.getExpression()) &&
-    node.getExpression().getText() === "module"
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "exports" &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.getText(source) === "module"
   );
 }
 
-function literalText(node: Node | undefined): string | null {
-  if (node && (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node))) return node.getLiteralValue();
+function literalText(node: ts.Node | undefined): string | null {
+  if (node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node))) return node.text;
   return null;
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { StateMark } from "@/components/state-mark";
 import { STALE_AFTER_MS, type Progress } from "@/lib/pipeline/stages";
 import { sameProgress, useProgress } from "./use-progress";
@@ -20,12 +21,19 @@ export type RowData = {
 // started in another tab moves here too.
 export function AnalysisRow({ row }: { row: RowData }) {
   const { progress } = useProgress(row.id, row.progress);
+  const router = useRouter();
   const stale = row.staleAtRender && sameProgress(progress, row.progress);
   const finishedNow = !row.finished && (progress.status === "complete" || progress.status === "failed");
   const note = progress.status === "complete" ? null : progress.message;
 
   return (
-    <tr className="border-b border-line align-top transition-colors last:border-b-0 hover:bg-ink/[0.03]">
+    <tr
+      // The whole row opens the analysis; the link inside stays for keyboards and new tabs.
+      onClick={(e) => {
+        if (!(e.target instanceof HTMLElement && e.target.closest("a"))) router.push(`/analyses/${row.id}`);
+      }}
+      className="cursor-pointer border-b border-line align-top transition-colors last:border-b-0 hover:bg-ink/[0.03]"
+    >
       <td className="truncate px-4 py-3 font-mono">
         <Link href={`/analyses/${row.id}`} className="block">
           {row.repository ? (

@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ChevronRight, Folder, FolderOpen } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen, MapPinned } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RoleIcon } from "@/components/ui/role-icon";
 import { cn } from "@/lib/cn";
@@ -67,7 +67,7 @@ export function Explorer({ className }: { className?: string }) {
 }
 
 function TreeItem({ node, depth, expanded, onToggle }: { node: TreeNode; depth: number; expanded: ReadonlySet<string>; onToggle: (path: string) => void }) {
-  const { selection, reveal, roles, hidden, setHover } = useWorkspace();
+  const { selection, reveal, roles, hidden, setHover, whole, scope, goTo } = useWorkspace();
   const pad = { paddingLeft: 10 + depth * 13 };
 
   if (node.file) {
@@ -97,19 +97,37 @@ function TreeItem({ node, depth, expanded, onToggle }: { node: TreeNode; depth: 
   }
 
   const open = expanded.has(node.path);
+  // In the folder view, the folder on the map is marked, and any folder can be put there.
+  const onMap = !whole && scope === node.path;
   return (
     <li role="treeitem" aria-expanded={open} aria-selected={false}>
-      <button
-        type="button"
-        onClick={() => onToggle(node.path)}
-        style={pad}
-        className="flex h-7 w-full items-center gap-1.5 pr-2 text-left text-[12.5px] text-muted transition-colors hover:bg-ink/[0.04] hover:text-fg"
-      >
-        <ChevronRight className={cn("size-3 shrink-0 transition-transform duration-200", open && "rotate-90")} aria-hidden />
-        {open ? <FolderOpen className="size-3.5 shrink-0 text-subtle" aria-hidden /> : <Folder className="size-3.5 shrink-0 text-subtle" aria-hidden />}
-        <span className="truncate">{node.name}</span>
-        <span className="ml-auto font-mono text-[10px] text-subtle/70">{node.count}</span>
-      </button>
+      <div className="group/folder relative">
+        <button
+          type="button"
+          onClick={() => onToggle(node.path)}
+          style={pad}
+          className={cn(
+            "flex h-7 w-full items-center gap-1.5 pr-2 text-left text-[12.5px] transition-colors hover:bg-ink/[0.04] hover:text-fg",
+            onMap ? "text-violet-soft" : "text-muted",
+          )}
+        >
+          <ChevronRight className={cn("size-3 shrink-0 transition-transform duration-200", open && "rotate-90")} aria-hidden />
+          {open ? <FolderOpen className="size-3.5 shrink-0 text-subtle" aria-hidden /> : <Folder className="size-3.5 shrink-0 text-subtle" aria-hidden />}
+          <span className="truncate">{node.name}</span>
+          <span className={cn("ml-auto font-mono text-[10px] text-subtle/70", !whole && "group-hover/folder:invisible")}>{node.count}</span>
+        </button>
+        {!whole && (
+          <button
+            type="button"
+            onClick={() => goTo(node.path)}
+            title="Show this folder on the map"
+            aria-label={`Show ${node.path} on the map`}
+            className="absolute right-1.5 top-1/2 hidden size-5 -translate-y-1/2 items-center justify-center rounded-md text-subtle transition hover:bg-ink/[0.08] hover:text-fg focus-visible:flex group-hover/folder:flex"
+          >
+            <MapPinned className="size-3" aria-hidden />
+          </button>
+        )}
+      </div>
       <AnimatePresence initial={false}>
         {open && (
           <motion.ul

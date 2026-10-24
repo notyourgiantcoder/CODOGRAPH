@@ -1,4 +1,4 @@
-import { Node, type SourceFile } from "ts-morph";
+import { ts, type SourceFile } from "ts-morph";
 import type { Role } from "../../roles.ts";
 import { toolConventions, toolRole } from "./conventions.ts";
 import { NO_ROUTES, type AdapterFile, type FrameworkAdapter } from "./types.ts";
@@ -16,11 +16,13 @@ export function reactRole({ path, source }: AdapterFile): Role | null {
   return null;
 }
 
+// Walks the compiler's own nodes and stops at the first JSX: wrapping every
+// node of a file that has none, to learn that it has none, is the slowest
+// thing a large repository's parse would otherwise do.
 function containsJsx(source: SourceFile): boolean {
-  return (
-    source.getFirstDescendant((n) => Node.isJsxElement(n) || Node.isJsxSelfClosingElement(n) || Node.isJsxFragment(n)) !==
-    undefined
-  );
+  const visit = (node: ts.Node): boolean =>
+    ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node) || ts.isJsxFragment(node) || ts.forEachChild(node, visit) === true;
+  return ts.forEachChild(source.compilerNode, visit) === true;
 }
 
 export const reactAdapter: FrameworkAdapter = {
@@ -30,5 +32,6 @@ export const reactAdapter: FrameworkAdapter = {
   reachedBy: toolConventions,
   // Tests render JSX too; the runner's pattern says what they are first.
   roleOf: (file) => toolRole(file.path) ?? reactRole(file),
+  routeSource: () => false,
   routes: () => NO_ROUTES,
 };

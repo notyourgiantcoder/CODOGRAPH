@@ -1,17 +1,25 @@
+import { execFile } from "node:child_process";
+import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { x as extract } from "tar";
+import { x as extract, type ReadEntry } from "tar";
+import { CODE_EXTENSIONS, isCodeFile } from "../parser/walk.ts";
 
 export type Repository = { owner: string; name: string };
 
 // Past this the archive isn't downloaded at all. There's no queue or worker to
 // hand a huge repository to, so the limit is stated rather than engineered round.
-export const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
+// It's this high because only code and JSON reach the disk (see keepsContents).
+export const MAX_ARCHIVE_BYTES = 500 * 1024 * 1024;
 
 // A hung request would otherwise hold the run in its stage until it goes stale.
 // The archive's limit covers streaming the whole body, so it's far longer.
 const API_TIMEOUT_MS = 15_000;
-const ARCHIVE_TIMEOUT_MS = 5 * 60_000;
+const ARCHIVE_TIMEOUT_MS = 10 * 60_000;
 
 // The message is written for the person who pasted the URL, and is what the
 // failed row shows.
@@ -96,6 +104,14 @@ export async function fetchFileAt({ owner, name }: Repository, sha: string, file
   return Buffer.from(await withTimeout(what, API_TIMEOUT_MS, () => response.arrayBuffer()));
 }
 
+// The parser reads code files, and JSON for package.json and tsconfig. Every
+// other file is still written, empty, because an import of ./logo.png has to
+// find a file there to be reported as a non-code target rather than as
+// missing. Images, videos and fixtures are most of a big archive's bytes.
+function keepsContents(entryPath: string): boolean {
+  return isCodeFile(entryPath) || entryPath.endsWith(".json");
+}
+
 // Streams the archive straight into the directory, dropping GitHub's
 // "<owner>-<name>-<sha>/" wrapper folder. tar refuses absolute paths and "..",
 // so nothing lands outside it.
@@ -121,8 +137,139 @@ export async function downloadArchive({ owner, name }: Repository, sha: string, 
     },
   });
   const body = response.body;
-  await withTimeout(what, ARCHIVE_TIMEOUT_MS, () => pipeline(Readable.from(chunks(body)), limit, extract({ cwd: directory, strip: 1 })));
+  const emptied: string[] = [];
+  const filter = (entryPath: string, entry: ReadEntry | Stats) => {
+    if (!("type" in entry)) return true;
+    if (entry.type !== "File" && entry.type !== "OldFile" && entry.type !== "ContiguousFile") return true;
+    if (keepsContents(entryPath)) return true;
+    // The same wrapper folder strip: 1 drops from what tar writes.
+    const relative = entryPath.split("/").slice(1).join("/");
+    if (relative) emptied.push(relative);
+    return false;
+  };
+  await withTimeout(what, ARCHIVE_TIMEOUT_MS, () => pipeline(Readable.from(chunks(body)), limit, extract({ cwd: directory, strip: 1, filter })));
+  await writeEmpty(directory, emptied);
   return received;
+}
+
+// tar's own path checks don't cover what's written outside it, so the same
+// refusals are made here: no absolute path or "..", and no folder on the way
+// that is a link, since a link in the repository could point anywhere.
+async function writeInside(
+  directory: string,
+  relativePaths: readonly string[],
+  write: (target: string) => Promise<void>,
+): Promise<void> {
+  const root = path.resolve(directory);
+  const checked = new Set<string>();
+  for (const relative of relativePaths) {
+    const parts = relative.split("/");
+    if (path.isAbsolute(relative) || parts.some((part) => part === "" || part === "." || part === "..")) continue;
+    let at = root;
+    let safe = true;
+    for (const part of parts.slice(0, -1)) {
+      at = path.join(at, part);
+      if (checked.has(at)) continue;
+      const stat = await lstat(at).catch(() => null);
+      if (!stat) await mkdir(at);
+      else if (!stat.isDirectory()) {
+        safe = false;
+        break;
+      }
+      checked.add(at);
+    }
+    if (safe) await write(path.join(at, parts[parts.length - 1]));
+  }
+}
+
+// Whatever is already at that path wins over a placeholder.
+const ignoreExisting = (error: NodeJS.ErrnoException) => {
+  if (error.code !== "EEXIST") throw error;
+};
+
+function writeEmpty(directory: string, relativePaths: readonly string[]): Promise<void> {
+  return writeInside(directory, relativePaths, (target) => writeFile(target, "", { flag: "wx" }).catch(ignoreExisting));
+}
+
+const git = promisify(execFile);
+
+// Git with no settings but these: the person's own config (autocrlf, hooks,
+// credentials) can't change what lands on disk, and it never stops to ask
+// for a password.
+const GIT_ENV = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0" };
+
+const CODE_PATTERNS = [...CODE_EXTENSIONS, ".json"].map((ext) => `*${ext}`);
+
+// A sparse-checkout line naming exactly one path; every character
+// gitignore treats specially is escaped.
+function exactPattern(relative: string): string {
+  return `/${relative.replace(/[\\*?[\]!# ]/g, (c) => `\\${c}`)}`;
+}
+
+/**
+ * The repository at one commit, as downloadArchive leaves it, but fetched
+ * with git: only the code and JSON files' contents cross the network, so
+ * images and videos cost nothing. The git data is kept outside the directory
+ * the parser walks. Throws when git isn't installed or can't fetch.
+ */
+export async function cloneCode({ owner, name }: Repository, sha: string, directory: string): Promise<void> {
+  const gitDir = await mkdtemp(path.join(tmpdir(), "cartograph-git-"));
+  const deadline = Date.now() + ARCHIVE_TIMEOUT_MS;
+  const run = async (args: string[]) => {
+    const timeout = deadline - Date.now();
+    if (timeout <= 0) throw new PipelineError(`Fetching ${owner}/${name} with git took longer than ${ARCHIVE_TIMEOUT_MS / 1000} seconds`);
+    const env = { ...GIT_ENV, GIT_DIR: gitDir, GIT_WORK_TREE: directory };
+    return (await git("git", args, { env, timeout, maxBuffer: 512 * 1024 * 1024 })).stdout;
+  };
+  try {
+    await run(["init", "-q"]);
+    await run(["fetch", "-q", "--depth", "1", "--filter=blob:none", `https://github.com/${owner}/${name}.git`, sha]);
+
+    const tree = (await run(["ls-tree", "-r", "-z", "--full-tree", "FETCH_HEAD"])).split("\0").filter(Boolean);
+    const links: string[] = [];
+    const submodules: string[] = [];
+    const emptied: string[] = [];
+    for (const line of tree) {
+      const tab = line.indexOf("\t");
+      const mode = line.slice(0, line.indexOf(" "));
+      const entryPath = line.slice(tab + 1);
+      if (mode === "120000") links.push(entryPath);
+      else if (mode === "160000") submodules.push(entryPath);
+      else if (!keepsContents(entryPath)) emptied.push(entryPath);
+    }
+
+    // Code by extension, and each link by its path, since tar recreates links whatever they're named.
+    await run(["config", "core.sparseCheckout", "true"]);
+    await run(["config", "core.sparseCheckoutCone", "false"]);
+    await mkdir(path.join(gitDir, "info"), { recursive: true });
+    await writeFile(path.join(gitDir, "info", "sparse-checkout"), [...CODE_PATTERNS, ...links.map(exactPattern)].join("\n") + "\n");
+    await run(["checkout", "-q", "--force", "FETCH_HEAD"]);
+
+    // An archive holds a submodule as an empty folder, and every other file as itself.
+    await writeInside(directory, submodules, (target) => mkdir(target).catch(ignoreExisting));
+    await writeEmpty(directory, emptied);
+  } finally {
+    await rm(gitDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Puts the repository at one commit into the directory: with git when it's
+ * there, since that skips every file the parser doesn't read, otherwise from
+ * GitHub's archive. Either way the directory holds the same paths and bytes.
+ */
+export async function downloadRepository(repository: Repository, sha: string, directory: string): Promise<"git" | "archive"> {
+  try {
+    await cloneCode(repository, sha, directory);
+    return "git";
+  } catch (error) {
+    // The archive starts from an empty directory, not a half-finished checkout.
+    console.warn(`git couldn't fetch ${repository.owner}/${repository.name}, downloading the archive instead:`, error instanceof Error ? error.message : error);
+    await rm(directory, { recursive: true, force: true });
+    await mkdir(directory);
+    await downloadArchive(repository, sha, directory);
+    return "archive";
+  }
 }
 
 // An aborted fetch throws a bare "TimeoutError"; the failed row should say what timed out.

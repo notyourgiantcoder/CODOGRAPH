@@ -19,8 +19,8 @@ export const STAGES: readonly { stage: Stage; label: string }[] = [
 
 // Nothing here has a queue or a timeout, so a process that dies mid-run leaves
 // a row that says "running" forever. Past this it's shown as stale, and can
-// be started again. Parsing a large repository takes well under this.
-export const STALE_AFTER_MS = 5 * 60 * 1000;
+// be started again. Downloading and parsing a 500 MB archive fits inside it.
+export const STALE_AFTER_MS = 15 * 60 * 1000;
 
 export function progressTopic(analysisId: string): string {
   return `analysis:${analysisId}`;

@@ -290,6 +290,7 @@ Open **[http://localhost:3000](http://localhost:3000)**.
 | `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase → Project Settings |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | ✅ | Supabase → Project Settings → API Keys |
 | `SUPABASE_SECRET_KEY` | ✅ | Supabase → Project Settings → API Keys |
+| `DATABASE_URL` | Optional, much faster storing for big repos | Supabase → **Connect** → Session pooler → URI (fill in your database password) |
 | `OPENAI_API_KEY` *or* `NVIDIA_API_KEY` | For Explain | OpenAI or build.nvidia.com |
 | `LANGSMITH_*` | Optional | smith.langchain.com |
 

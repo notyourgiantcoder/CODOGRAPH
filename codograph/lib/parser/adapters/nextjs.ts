@@ -60,6 +60,8 @@ export const nextjsAdapter: FrameworkAdapter = {
   roleOf(file) {
     return nextConvention(file.path)?.role ?? toolRole(file.path) ?? (usesServer(file.source) ? "server-action" : reactRole(file));
   },
+  // nextRoutes reads only the config, for basePath, and route handlers.
+  routeSource: (path) => CONFIG.test(path) || nextConvention(path)?.role === "api-endpoint",
   routes: nextRoutes,
 };
 
